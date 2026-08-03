@@ -171,6 +171,10 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
         <input type="text" id="host-name" placeholder="e.g. Sam" maxlength="18">
       </div>
       <div>
+        <label>Your age <span style="font-weight:400;text-transform:none;color:#B9B08C">(so we can pick trivia that fits the group)</span></label>
+        <input type="text" inputmode="numeric" id="host-age" placeholder="e.g. 34" maxlength="3">
+      </div>
+      <div>
         <label>Add a selfie <span style="font-weight:400;text-transform:none;color:#B9B08C">(for the eyes/nose zoom round)</span></label>
         <input type="file" accept="image/*" capture="user" id="host-photo-input" class="hidden" onchange="onAvatarChosen(event,'host-avatar-preview','host-photo-drop')">
         <div class="file-drop" onclick="document.getElementById('host-photo-input').click()" id="host-photo-drop">📷 Tap to add a photo</div>
@@ -223,6 +227,10 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
       <div>
         <label>Your name</label>
         <input type="text" id="join-name" placeholder="e.g. Alex" maxlength="18">
+      </div>
+      <div>
+        <label>Your age <span style="font-weight:400;text-transform:none;color:#B9B08C">(so we can pick trivia that fits the group)</span></label>
+        <input type="text" inputmode="numeric" id="join-age" placeholder="e.g. 12" maxlength="3">
       </div>
       <div>
         <label>Phone (optional, for reminders)</label>
@@ -517,6 +525,7 @@ window.addEventListener('DOMContentLoaded', ()=>{
    ============================================================ */
 async function createGame(){
   const name = document.getElementById('host-name').value.trim() || 'Host';
+  const age = parseInt(document.getElementById('host-age').value,10) || null;
   const durEl = document.querySelector('#duration-pills .pill.selected');
   const isSingle = durEl.dataset.min === 'single';
   const duration = isSingle ? 0 : parseInt(durEl.dataset.min,10);
@@ -533,7 +542,7 @@ async function createGame(){
     duration_minutes: duration, status: 'lobby',
     state: { enabledModes: modes, singleRound: isSingle, session: null }
   });
-  await DB.addPlayer({ id: ME.id, game_code: code, name, score:0, is_host:true, avatar: ME.avatar||null, object_photo: ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
+  await DB.addPlayer({ id: ME.id, game_code: code, name, age, score:0, is_host:true, avatar: ME.avatar||null, object_photo: ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
 
   renderLobby(duration, isSingle);
   startSync();
@@ -546,6 +555,7 @@ async function createGame(){
 async function joinGame(){
   const code = document.getElementById('join-code').value.trim().toUpperCase();
   const name = document.getElementById('join-name').value.trim();
+  const age = parseInt(document.getElementById('join-age').value,10) || null;
   const phone = document.getElementById('join-phone').value.trim();
   if(code.length!==4){ toast('Enter the 4-letter room code'); return; }
   if(!name){ toast('Enter your name'); return; }
@@ -556,7 +566,7 @@ async function joinGame(){
   ROOM = code;
   ME.id = uid(); ME.name = name; ME.isHost = false;
   const answers = collectProfileAnswers('join-profile-qs');
-  await DB.addPlayer({ id: ME.id, game_code: code, name, phone, score:0, is_host:false, avatar: ME.avatar||null, object_photo: ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
+  await DB.addPlayer({ id: ME.id, game_code: code, name, age, phone, score:0, is_host:false, avatar: ME.avatar||null, object_photo: ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
 
   gameRow = g;
   renderLobby(g.duration_minutes, !!g.state.singleRound);
@@ -688,8 +698,20 @@ const TRIVIA = {
   ]
 };
 
+// minimum age a category is aimed at — used to steer trivia toward
+// whatever fits the group's average age
+const TRIVIA_MIN_AGE = { fruitveg:4, cereals:5, states:8, stores:10, lakes:10 };
+
+function getAverageAge(){
+  const ages = playersCache.map(p=>parseInt(p.age,10)).filter(n=>!isNaN(n) && n>0);
+  if(ages.length===0) return 25; // no ages given — assume a general adult mix
+  return ages.reduce((a,b)=>a+b,0)/ages.length;
+}
+
 function pickTrivia(){
-  const cats = Object.keys(TRIVIA);
+  const avgAge = getAverageAge();
+  let cats = Object.keys(TRIVIA).filter(c => avgAge >= (TRIVIA_MIN_AGE[c]||0));
+  if(cats.length===0) cats = Object.keys(TRIVIA); // fallback if somehow nothing qualifies
   const cat = cats[Math.floor(Math.random()*cats.length)];
   const list = TRIVIA[cat];
   const [q, opts, correct] = list[Math.floor(Math.random()*list.length)];
@@ -742,7 +764,11 @@ function pickObjectVote(){
 }
 
 function buildRound(mode, roundId){
-  if(mode==='rps') return { type:'rps', id:roundId, phase:'winners', wave:1, alive: playersCache.map(p=>p.id), wins:{}, losersPool:[], winnersChampion:null, losersChampion:null, startedAt: Date.now() };
+  if(mode==='rps'){
+    const alive = playersCache.map(p=>p.id);
+    const { pairings, byeId } = makePairings(alive, {});
+    return { type:'rps', id:roundId, phase:'winners', wave:1, alive, wins:{}, losersPool:[], pairings, byeId, winnersChampion:null, losersChampion:null, startedAt: Date.now() };
+  }
   if(mode==='guesswho') return { ...pickGuessWho(), id:roundId, startedAt: Date.now() };
   if(mode==='photo') return { ...pickPhoto(), id:roundId, zoomX: 28+Math.random()*44, zoomY: 12+Math.random()*30, startedAt: Date.now() };
   if(mode==='object'){
@@ -986,7 +1012,7 @@ async function pollRoundProgress(){
   if(!r || r.standingsUntil) return; // showing standings — nothing to resolve
   const key = currentRoundKey();
   if(key === lastResolvedKey) return;
-  const expected = r.type==='rps' ? r.alive.length : playersCache.length;
+  const expected = r.type==='rps' ? (r.pairings?r.pairings.length*2:r.alive.length) : playersCache.length;
   const roundIdForAnswers = r.type==='rps' ? (r.id+':w'+r.wave+':'+r.phase) : r.id;
   const answers = await DB.listAnswers(ROOM, roundIdForAnswers);
   const timedOut = r.startedAt && (Date.now()-r.startedAt > 25000);
@@ -1028,14 +1054,22 @@ async function nextRound(){
 /* ---- RPS: tournament bracket with a losers bracket ----
    Byes: if the wave has an odd number of players, the bye goes to
    whoever has the most wins so far this phase (a reward for winning).
-   On the very first wave everyone's tied at 0, so the bye is random. */
+   On the very first wave everyone's tied at 0, so the bye is random.
+   Pairings are decided the moment a wave starts (not at resolve time),
+   so every client can see who they're matched against before throwing. */
 function renderRPS(r, body, status, hostCtl){
   const phaseLabel = r.phase==='winners' ? 'Winners Bracket' : 'Losers Bracket';
   const aliveNames = r.alive.map(id=>(playersCache.find(p=>p.id===id)||{}).name).filter(Boolean);
   let html = `<div class="prompt-text">${phaseLabel} · Wave ${r.wave}</div>`;
   html += `<p class="small">${aliveNames.join(' · ')}</p>`;
   const amAlive = r.alive.includes(ME.id);
-  if(amAlive){
+  if(amAlive && ME.id===r.byeId){
+    html += `<p class="prompt-text center">🎉 You drew a bye — free pass to the next wave!</p>`;
+  } else if(amAlive){
+    const pair = (r.pairings||[]).find(p=>p.includes(ME.id));
+    const oppId = pair ? pair.find(id=>id!==ME.id) : null;
+    const oppName = oppId ? (playersCache.find(p=>p.id===oppId)||{}).name || '…' : 'someone';
+    html += `<div class="prompt-text center">You vs ${oppName}</div>`;
     html += `<div class="rps-choices">
       <button onclick="rpsThrow('rock')" id="rps-rock">🪨</button>
       <button onclick="rpsThrow('paper')" id="rps-paper">📄</button>
@@ -1052,7 +1086,8 @@ function renderRPS(r, body, status, hostCtl){
   if(localAnswered){
     document.querySelectorAll('.rps-choices button').forEach(b=>b.disabled=true);
   }
-  status.textContent = amAlive ? (localAnswered?'Locked in — waiting on others…':'Rock, paper, or scissors?') : '';
+  const needsThrow = amAlive && ME.id!==r.byeId;
+  status.textContent = needsThrow ? (localAnswered?'Locked in — waiting on others…':'Rock, paper, or scissors?') : '';
   if(r.alive.length>0) showForceResolveButton(hostCtl);
 }
 
@@ -1075,23 +1110,31 @@ function pickByeId(alivePool, wins){
   return candidates[Math.floor(Math.random()*candidates.length)];
 }
 
+/* decide matchups for a wave before anyone throws, so clients can
+   display "you vs <name>" right away */
+function makePairings(alivePool, wins){
+  let byeId = null, pool = alivePool;
+  if(alivePool.length % 2 === 1 && alivePool.length>1){
+    byeId = pickByeId(alivePool, wins);
+    pool = alivePool.filter(id=>id!==byeId);
+  }
+  const shuffled = [...pool].sort(()=>Math.random()-0.5);
+  const pairings = [];
+  for(let i=0;i<shuffled.length;i+=2){
+    pairings.push([shuffled[i], shuffled[i+1]]);
+  }
+  return { pairings, byeId };
+}
+
 async function resolveRPSWave(){
   const r = gameRow.state.round;
   const answers = await DB.listAnswers(ROOM, r.id+':w'+r.wave+':'+r.phase);
   const byPlayer = {}; answers.forEach(a=> byPlayer[a.player_id]=a.payload.choice);
-  const alive = [...r.alive];
   const wins = {...(r.wins||{})};
 
-  let byeId = null, pool = alive;
-  if(alive.length % 2 === 1 && alive.length>1){
-    byeId = pickByeId(alive, wins);
-    pool = alive.filter(id=>id!==byeId);
-  }
-  const shuffled = [...pool].sort(()=>Math.random()-0.5);
   const winners = new Set(); const losersThisWave = [];
-  if(byeId) winners.add(byeId);
-  for(let i=0;i<shuffled.length;i+=2){
-    const p1=shuffled[i], p2=shuffled[i+1];
+  if(r.byeId) winners.add(r.byeId);
+  for(const [p1,p2] of (r.pairings||[])){
     const c1=byPlayer[p1], c2=byPlayer[p2];
     let w,l;
     if(!c1 && !c2){ w=p1; l=p2; }
@@ -1119,11 +1162,13 @@ async function resolveRPSWave(){
         await showStandings(finalRound, champ?`🏆 ${champ.name} wins the RPS tournament!`:'RPS tournament complete!');
         await nextRound();
       } else {
-        const nextPhaseRound = {...r, phase:'losers', wave:1, alive:newLosersPool, losersPool:[], wins:{}, winnersChampion:championId, startedAt:Date.now()};
+        const { pairings, byeId } = makePairings(newLosersPool, {});
+        const nextPhaseRound = {...r, phase:'losers', wave:1, alive:newLosersPool, losersPool:[], wins:{}, pairings, byeId, winnersChampion:championId, startedAt:Date.now()};
         await DB.updateGame(ROOM, { state:{...gameRow.state, round: nextPhaseRound} });
       }
     } else {
-      await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, losersPool:newLosersPool, wins, wave:r.wave+1, startedAt:Date.now()}} });
+      const { pairings, byeId } = makePairings(newAlive, wins);
+      await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, losersPool:newLosersPool, wins, pairings, byeId, wave:r.wave+1, startedAt:Date.now()}} });
     }
   } else { // losers phase
     if(newAlive.length<=1){
@@ -1135,7 +1180,8 @@ async function resolveRPSWave(){
       await showStandings(finalRound, msg);
       await nextRound();
     } else {
-      await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, wins, wave:r.wave+1, startedAt:Date.now()}} });
+      const { pairings, byeId } = makePairings(newAlive, wins);
+      await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, wins, pairings, byeId, wave:r.wave+1, startedAt:Date.now()}} });
     }
   }
 }
