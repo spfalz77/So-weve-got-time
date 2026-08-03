@@ -164,12 +164,19 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
         <input type="text" id="host-name" placeholder="e.g. Sam" maxlength="18">
       </div>
       <div>
+        <label>Add a selfie <span style="font-weight:400;text-transform:none;color:#B9B08C">(for the eyes/nose zoom round)</span></label>
+        <input type="file" accept="image/*" capture="user" id="host-photo-input" class="hidden" onchange="onAvatarChosen(event,'host-avatar-preview','host-photo-drop')">
+        <div class="file-drop" onclick="document.getElementById('host-photo-input').click()" id="host-photo-drop">📷 Tap to add a photo</div>
+        <img id="host-avatar-preview" class="avatar-preview hidden">
+      </div>
+      <div>
         <label>How long do we have?</label>
         <div class="pill-group" id="duration-pills">
           <div class="pill" data-min="5">5 min</div>
           <div class="pill selected" data-min="15">15 min</div>
           <div class="pill" data-min="30">30 min</div>
           <div class="pill" data-min="60">1 hour</div>
+          <div class="pill" data-min="single">🔁 Single round (debug)</div>
         </div>
       </div>
       <div>
@@ -181,6 +188,11 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
           <div class="pill selected" data-mode="photo">🔍 Photo Zoom</div>
         </div>
       </div>
+    </div>
+    <div class="card stack">
+      <h3 style="margin:0">Quick — about you</h3>
+      <p class="small" style="margin:-6px 0 0;color:#8B8367">We'll quiz the group on these later.</p>
+      <div id="host-profile-qs" class="stack"></div>
     </div>
     <button class="btn-primary" onclick="createGame()">Create room</button>
   </section>
@@ -203,11 +215,16 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
         <input type="tel" id="join-phone" placeholder="optional">
       </div>
       <div>
-        <label>Add a selfie <span style="font-weight:400;text-transform:none;color:#B9B08C">(for Photo Zoom round — optional)</span></label>
-        <input type="file" accept="image/*" capture="user" id="join-photo-input" class="hidden" onchange="onAvatarChosen(event)">
+        <label>Add a selfie <span style="font-weight:400;text-transform:none;color:#B9B08C">(for the eyes/nose zoom round)</span></label>
+        <input type="file" accept="image/*" capture="user" id="join-photo-input" class="hidden" onchange="onAvatarChosen(event,'avatar-preview','photo-drop')">
         <div class="file-drop" onclick="document.getElementById('join-photo-input').click()" id="photo-drop">📷 Tap to add a photo</div>
         <img id="avatar-preview" class="avatar-preview hidden">
       </div>
+    </div>
+    <div class="card stack">
+      <h3 style="margin:0">Quick — about you</h3>
+      <p class="small" style="margin:-6px 0 0;color:#8B8367">We'll quiz the group on these later.</p>
+      <div id="join-profile-qs" class="stack"></div>
     </div>
     <button class="btn-mint" onclick="joinGame()">Join room</button>
   </section>
@@ -231,26 +248,11 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
     <h3 style="margin:4px 0 0">Who's in <span id="roster-count">(0)</span></h3>
     <div class="roster" id="roster"></div>
     <div id="host-controls" class="hidden stack">
-      <button class="btn-primary" id="start-btn" onclick="beginProfilePhase()" disabled>Start — need 2+ players</button>
+      <button class="btn-primary" id="start-btn" onclick="beginRounds()" disabled>Start — need 2+ players</button>
       <p class="small center">You're the host. Keep this screen up as the shared display if you want, or hand it to the middle of the table.</p>
     </div>
     <div id="guest-waiting" class="hidden">
       <p class="small center">Waiting for the host to start the game…</p>
-    </div>
-  </section>
-
-  <!-- PROFILE QUESTIONS -->
-  <section class="screen" id="screen-profile">
-    <h2>Quick — about you</h2>
-    <p class="small">We'll quiz the group on these later. Be honest, it's funnier.</p>
-    <div class="card stack" id="profile-form"></div>
-    <button class="btn-primary" id="profile-submit-btn" onclick="submitProfile()">Submit answers</button>
-    <div id="profile-wait" class="hidden">
-      <p class="small center" id="profile-wait-text">Waiting on everyone else…</p>
-    </div>
-    <div id="profile-host-controls" class="hidden stack">
-      <p class="small center" id="profile-progress-text"></p>
-      <button class="btn-mint" onclick="beginRounds()">Begin rounds now</button>
     </div>
   </section>
 
@@ -348,23 +350,28 @@ document.getElementById('mode-pills').addEventListener('click', e=>{
   p.classList.toggle('selected');
 });
 
-/* avatar upload -> resized base64 */
-function onAvatarChosen(e){
+/* avatar upload -> resized base64, centered so a face-forward selfie
+   keeps eyes/nose roughly centered for the zoom round */
+function onAvatarChosen(e, previewId, dropId){
+  previewId = previewId || 'avatar-preview';
+  dropId = dropId || 'photo-drop';
   const file = e.target.files[0]; if(!file) return;
   const img = new Image();
   const reader = new FileReader();
   reader.onload = ev=>{
     img.onload = ()=>{
-      const size=160;
+      const size=200;
       const canvas = document.createElement('canvas'); canvas.width=size; canvas.height=size;
       const ctx = canvas.getContext('2d');
       const s = Math.max(size/img.width, size/img.height);
       const w = img.width*s, h = img.height*s;
-      ctx.drawImage(img, (size-w)/2, (size-h)/2, w, h);
-      ME.avatar = canvas.toDataURL('image/jpeg', 0.72);
-      const prev = document.getElementById('avatar-preview');
+      // bias slightly upward, since selfies usually have more chin/chest
+      // below the face than headroom above it
+      ctx.drawImage(img, (size-w)/2, (size-h)*0.38, w, h);
+      ME.avatar = canvas.toDataURL('image/jpeg', 0.75);
+      const prev = document.getElementById(previewId);
       prev.src = ME.avatar; prev.classList.remove('hidden');
-      document.getElementById('photo-drop').textContent = '✅ Photo added';
+      document.getElementById(dropId).textContent = '✅ Photo added';
     };
     img.src = ev.target.result;
   };
@@ -429,26 +436,61 @@ function startSync(){
 function stopSync(){ if(pollTimer) clearInterval(pollTimer); }
 
 /* ============================================================
+   PROFILE QUESTIONS — fixed set of 5, asked right at join/create
+   ============================================================ */
+const PROFILE_QUESTIONS = [
+  {k:'vacation', q:"Favorite vacation destination?"},
+  {k:'color', q:"Favorite color?"},
+  {k:'auntuncle', q:"Favorite aunt or uncle — name them!"},
+  {k:'food', q:"A food you'd eat every day forever?"},
+  {k:'talent', q:"A hidden talent or your silliest habit?"}
+];
+
+function renderProfileQuestions(containerId){
+  const el = document.getElementById(containerId);
+  if(!el) return;
+  el.innerHTML = PROFILE_QUESTIONS.map(q=>`
+    <div>
+      <label>${q.q}</label>
+      <input type="text" data-key="${q.k}" maxlength="40" placeholder="Your answer">
+    </div>
+  `).join('');
+}
+function collectProfileAnswers(containerId){
+  const inputs = [...document.querySelectorAll('#'+containerId+' input')];
+  const answers = {};
+  inputs.forEach(i=> answers[i.dataset.key] = i.value.trim() || '(skipped)');
+  return answers;
+}
+window.addEventListener('DOMContentLoaded', ()=>{
+  renderProfileQuestions('host-profile-qs');
+  renderProfileQuestions('join-profile-qs');
+});
+
+/* ============================================================
    HOST: CREATE GAME
    ============================================================ */
 async function createGame(){
   const name = document.getElementById('host-name').value.trim() || 'Host';
-  const duration = parseInt(document.querySelector('#duration-pills .pill.selected').dataset.min,10);
+  const durEl = document.querySelector('#duration-pills .pill.selected');
+  const isSingle = durEl.dataset.min === 'single';
+  const duration = isSingle ? 0 : parseInt(durEl.dataset.min,10);
   const modes = [...document.querySelectorAll('#mode-pills .pill.selected')].map(p=>p.dataset.mode);
   if(modes.length===0){ toast('Pick at least one round type'); return; }
 
   const code = code4();
   ROOM = code;
   ME.id = uid(); ME.name = name; ME.isHost = true;
+  const answers = collectProfileAnswers('host-profile-qs');
 
   await DB.createGame({
     code, host_id: ME.id, host_name: name,
     duration_minutes: duration, status: 'lobby',
-    state: { enabledModes: modes, session: null }
+    state: { enabledModes: modes, singleRound: isSingle, session: null }
   });
-  await DB.addPlayer({ id: ME.id, game_code: code, name, score:0, is_host:true, avatar: ME.avatar||null, profile_answers:{}, profile_submitted:false });
+  await DB.addPlayer({ id: ME.id, game_code: code, name, score:0, is_host:true, avatar: ME.avatar||null, profile_answers:answers, profile_submitted:true });
 
-  renderLobby(duration);
+  renderLobby(duration, isSingle);
   startSync();
   go('lobby');
 }
@@ -468,10 +510,11 @@ async function joinGame(){
 
   ROOM = code;
   ME.id = uid(); ME.name = name; ME.isHost = false;
-  await DB.addPlayer({ id: ME.id, game_code: code, name, phone, score:0, is_host:false, avatar: ME.avatar||null, profile_answers:{}, profile_submitted:false });
+  const answers = collectProfileAnswers('join-profile-qs');
+  await DB.addPlayer({ id: ME.id, game_code: code, name, phone, score:0, is_host:false, avatar: ME.avatar||null, profile_answers:answers, profile_submitted:true });
 
   gameRow = g;
-  renderLobby(g.duration_minutes);
+  renderLobby(g.duration_minutes, !!g.state.singleRound);
   startSync();
   go('lobby');
 }
@@ -491,9 +534,11 @@ async function joinGame(){
 /* ============================================================
    LOBBY
    ============================================================ */
-function renderLobby(duration){
+function renderLobby(duration, isSingle){
   document.getElementById('lobby-code').textContent = ROOM;
-  document.getElementById('lobby-duration').textContent = duration + ' minutes on the clock';
+  document.getElementById('lobby-duration').textContent = isSingle
+    ? 'Debug mode — each enabled round plays once'
+    : duration + ' minutes on the clock';
   const joinUrl = location.origin + location.pathname + '?join=' + ROOM;
   document.getElementById('lobby-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(joinUrl);
   document.getElementById('host-controls').classList.toggle('hidden', !ME.isHost);
@@ -512,69 +557,14 @@ function onPlayersChange(){
     startBtn.disabled = playersCache.length < 2;
     startBtn.textContent = playersCache.length < 2 ? 'Start — need 2+ players' : `Start game (${playersCache.length} players)`;
   }
-  updateProfileProgress();
   if(gameRow && gameRow.status==='playing') renderScoreLive();
 }
 
 function onGameChange(){
   if(!gameRow) return;
   if(gameRow.status==='lobby'){ /* stay */ }
-  else if(gameRow.status==='profile'){ enterProfileScreen(); }
   else if(gameRow.status==='playing'){ enterPlayScreen(); }
   else if(gameRow.status==='ended'){ enterResultsScreen(); }
-}
-
-/* ============================================================
-   PROFILE QUESTIONS
-   ============================================================ */
-const PROFILE_POOL = [
-  {k:'color', q:"What's your favorite color?"},
-  {k:'food', q:"Pick a food you'd eat every day forever."},
-  {k:'animal', q:"If you were an animal, which one?"},
-  {k:'song', q:"A song stuck in your head lately?"},
-  {k:'superpower', q:"One superpower you'd want."},
-  {k:'season', q:"Favorite season?"},
-  {k:'snack', q:"Sweet snack or salty snack?"},
-  {k:'trip', q:"Dream vacation spot?"}
-];
-
-async function beginProfilePhase(){
-  const qs = [...PROFILE_POOL].sort(()=>Math.random()-0.5).slice(0,3);
-  await DB.updateGame(ROOM, { status:'profile', state: {...gameRow.state, profileQuestions: qs} });
-}
-
-function enterProfileScreen(){
-  const qs = gameRow.state.profileQuestions || [];
-  const form = document.getElementById('profile-form');
-  form.innerHTML = qs.map(q=>`
-    <div>
-      <label>${q.q}</label>
-      <input type="text" data-key="${q.k}" maxlength="40" placeholder="Your answer">
-    </div>
-  `).join('');
-  document.getElementById('profile-submit-btn').classList.remove('hidden');
-  document.getElementById('profile-wait').classList.add('hidden');
-  document.getElementById('profile-host-controls').classList.toggle('hidden', !ME.isHost);
-  go('profile');
-}
-
-async function submitProfile(){
-  const inputs = [...document.querySelectorAll('#profile-form input')];
-  const answers = {};
-  inputs.forEach(i=> answers[i.dataset.key] = i.value.trim() || '(skipped)');
-  await DB.updatePlayer(ME.id, { profile_answers: answers, profile_submitted:true });
-  document.getElementById('profile-submit-btn').classList.add('hidden');
-  document.getElementById('profile-wait').classList.remove('hidden');
-}
-
-function updateProfileProgress(){
-  if(!document.getElementById('screen-profile').classList.contains('active')) return;
-  const total = playersCache.length;
-  const submitted = playersCache.filter(p=>p.profile_submitted).length;
-  const t1 = document.getElementById('profile-wait-text');
-  if(t1) t1.textContent = `Waiting on everyone else… (${submitted}/${total})`;
-  const t2 = document.getElementById('profile-progress-text');
-  if(t2) t2.textContent = `${submitted}/${total} players have answered.`;
 }
 
 /* ============================================================
@@ -648,7 +638,7 @@ function pickGuessWho(){
   const person = withAnswers[Math.floor(Math.random()*withAnswers.length)];
   const keys = Object.keys(person.profile_answers);
   const key = keys[Math.floor(Math.random()*keys.length)];
-  const qText = (PROFILE_POOL.find(p=>p.k===key)||{q:'Their answer was:'}).q;
+  const qText = (PROFILE_QUESTIONS.find(p=>p.k===key)||{q:'Their answer was:'}).q;
   const answerVal = person.profile_answers[key];
   const distractors = playersCache.filter(p=>p.id!==person.id).sort(()=>Math.random()-0.5).slice(0,3);
   const names = [person.name, ...distractors.map(d=>d.name)];
@@ -671,13 +661,20 @@ function pickPhoto(){
 function buildRound(mode, roundId){
   if(mode==='rps') return { type:'rps', id:roundId, alive: playersCache.map(p=>p.id), wave:1, resolvedWave:0 };
   if(mode==='guesswho') return { ...pickGuessWho(), id:roundId };
-  if(mode==='photo') return { ...pickPhoto(), id:roundId, zoomX: 20+Math.random()*60, zoomY: 20+Math.random()*60 };
+  if(mode==='photo') return { ...pickPhoto(), id:roundId, zoomX: 28+Math.random()*44, zoomY: 12+Math.random()*30 };
   return { ...pickTrivia(), id:roundId };
 }
 
 async function beginRounds(){
   const modes = gameRow.state.enabledModes;
   const roundId = 'r'+Date.now();
+  if(gameRow.state.singleRound){
+    const queue = [...modes].sort(()=>Math.random()-0.5);
+    const mode = queue.shift();
+    const round = buildRound(mode, roundId);
+    await DB.updateGame(ROOM, { status:'playing', state:{...gameRow.state, roundQueue:queue, round} });
+    return;
+  }
   const mode = modes[Math.floor(Math.random()*modes.length)];
   const round = buildRound(mode, roundId);
   const sessionEndAt = Date.now() + gameRow.duration_minutes*60000;
@@ -694,6 +691,11 @@ function enterPlayScreen(){
 let sessionTickTimer = null;
 function tickSessionClock(){
   clearInterval(sessionTickTimer);
+  if(gameRow.state.singleRound){
+    document.getElementById('session-bar').style.width='100%';
+    updateSingleRoundProgress();
+    return;
+  }
   sessionTickTimer = setInterval(()=>{
     if(!gameRow || !gameRow.state.sessionEndAt) return;
     const remaining = gameRow.state.sessionEndAt - Date.now();
@@ -713,6 +715,12 @@ function tickSessionClock(){
   }, 1000);
 }
 
+function updateSingleRoundProgress(){
+  const left = (gameRow.state.roundQueue||[]).length;
+  const clock = document.getElementById('session-clock');
+  if(clock) clock.textContent = left>0 ? `Debug mode — ${left} more round${left===1?'':'s'} queued` : 'Debug mode — last round';
+}
+
 async function finishGame(){
   await DB.updateGame(ROOM, { status:'ended' });
 }
@@ -724,6 +732,7 @@ function renderScoreLive(){
 /* ---- render whichever round type is active ---- */
 function renderRound(){
   if(!gameRow || gameRow.status!=='playing') return;
+  if(gameRow.state.singleRound) updateSingleRoundProgress();
   const r = gameRow.state.round;
   const tag = document.getElementById('round-tag');
   const body = document.getElementById('round-body');
@@ -795,6 +804,16 @@ async function revealAndAdvance(){
 function sleep(ms){ return new Promise(res=>setTimeout(res,ms)); }
 
 async function nextRound(){
+  if(gameRow.state.singleRound){
+    const queue = gameRow.state.roundQueue || [];
+    if(queue.length===0){ await finishGame(); return; }
+    const newQueue = [...queue];
+    const mode = newQueue.shift();
+    const roundId = 'r'+Date.now();
+    const round = buildRound(mode, roundId);
+    await DB.updateGame(ROOM, { state:{...gameRow.state, roundQueue:newQueue, round} });
+    return;
+  }
   if(gameRow.state.sessionEndAt - Date.now() <= 0){ await finishGame(); return; }
   const modes = gameRow.state.enabledModes;
   const roundId = 'r'+Date.now();
