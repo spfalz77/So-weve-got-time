@@ -106,6 +106,7 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
 .mode-tag.rps{background:var(--coral);color:#3A0000;}
 .mode-tag.guesswho{background:var(--marigold);color:#231400;}
 .mode-tag.photo{background:#C6B7FF;color:#241155;}
+.mode-tag.object{background:#FFD9A0;color:#5A3400;}
 
 .prompt-text{font-size:22px;font-weight:800;line-height:1.3;margin:6px 0 2px;font-family:'Baloo 2',sans-serif;}
 .option-btn{width:100%;text-align:left;background:#fff;border:2px solid #E4DCC9;border-radius:14px;padding:14px 16px;font-weight:700;font-size:16px;color:var(--charcoal);}
@@ -118,6 +119,12 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
 .rps-choices button.chosen{background:var(--ink);color:var(--paper);}
 
 .zoom-frame{width:100%;aspect-ratio:1/1;border-radius:16px;overflow:hidden;background:#0000;position:relative;border:3px solid var(--marigold);}
+.object-frame{width:100%;aspect-ratio:1/1;border-radius:16px;overflow:hidden;border:3px solid var(--marigold);background:#0002;}
+.object-frame img{width:100%;height:100%;object-fit:cover;display:block;}
+.vote-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;}
+.vote-item{border-radius:14px;overflow:hidden;border:3px solid rgba(255,255,255,.2);cursor:pointer;aspect-ratio:1/1;}
+.vote-item img{width:100%;height:100%;object-fit:cover;display:block;}
+.vote-item.chosen{border-color:var(--marigold);}
 .zoom-frame img{position:absolute;width:340%;max-width:none;}
 
 .scoreboard{display:flex;flex-direction:column;gap:8px;}
@@ -170,6 +177,12 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
         <img id="host-avatar-preview" class="avatar-preview hidden">
       </div>
       <div>
+        <label>Snap an object <span style="font-weight:400;text-transform:none;color:#B9B08C">(for guess-who & vote rounds)</span></label>
+        <input type="file" accept="image/*" capture="environment" id="host-object-input" class="hidden" onchange="onObjectPhotoChosen(event,'host-object-preview','host-object-drop')">
+        <div class="file-drop" onclick="document.getElementById('host-object-input').click()" id="host-object-drop">📦 Tap to snap an object near you</div>
+        <img id="host-object-preview" class="avatar-preview hidden" style="border-radius:12px">
+      </div>
+      <div>
         <label>How long do we have?</label>
         <div class="pill-group" id="duration-pills">
           <div class="pill" data-min="5">5 min</div>
@@ -186,6 +199,7 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
           <div class="pill selected" data-mode="rps">✂️ RPS Tournament</div>
           <div class="pill selected" data-mode="guesswho">🙋 Guess Who</div>
           <div class="pill selected" data-mode="photo">🔍 Photo Zoom</div>
+          <div class="pill selected" data-mode="object">📦 Object Photos</div>
         </div>
       </div>
     </div>
@@ -220,6 +234,12 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
         <div class="file-drop" onclick="document.getElementById('join-photo-input').click()" id="photo-drop">📷 Tap to add a photo</div>
         <img id="avatar-preview" class="avatar-preview hidden">
       </div>
+      <div>
+        <label>Snap an object <span style="font-weight:400;text-transform:none;color:#B9B08C">(for guess-who & vote rounds)</span></label>
+        <input type="file" accept="image/*" capture="environment" id="join-object-input" class="hidden" onchange="onObjectPhotoChosen(event,'join-object-preview','join-object-drop')">
+        <div class="file-drop" onclick="document.getElementById('join-object-input').click()" id="join-object-drop">📦 Tap to snap an object near you</div>
+        <img id="join-object-preview" class="avatar-preview hidden" style="border-radius:12px">
+      </div>
     </div>
     <div class="card stack">
       <h3 style="margin:0">Quick — about you</h3>
@@ -245,6 +265,7 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
         </div>
       </div>
     </div>
+    <button class="btn-mint" onclick="shareInvite()">📤 Share invite link</button>
     <h3 style="margin:4px 0 0">Who's in <span id="roster-count">(0)</span></h3>
     <div class="roster" id="roster"></div>
     <div id="host-controls" class="hidden stack">
@@ -317,7 +338,7 @@ function demoSave(db){ localStorage.setItem('swgt_demo_db', JSON.stringify(db));
    APP STATE
    ============================================================ */
 let ROOM = null;            // room code
-let ME = { id:null, name:null, isHost:false, avatar:null };
+let ME = { id:null, name:null, isHost:false, avatar:null, objectPhoto:null };
 let gameRow = null;         // latest games row
 let playersCache = [];      // latest players rows
 let pollTimer = null;
@@ -378,6 +399,29 @@ function onAvatarChosen(e, previewId, dropId){
   reader.readAsDataURL(file);
 }
 
+/* object photo upload -> resized base64, centered crop (no face bias) */
+function onObjectPhotoChosen(e, previewId, dropId){
+  const file = e.target.files[0]; if(!file) return;
+  const img = new Image();
+  const reader = new FileReader();
+  reader.onload = ev=>{
+    img.onload = ()=>{
+      const size=220;
+      const canvas = document.createElement('canvas'); canvas.width=size; canvas.height=size;
+      const ctx = canvas.getContext('2d');
+      const s = Math.max(size/img.width, size/img.height);
+      const w = img.width*s, h = img.height*s;
+      ctx.drawImage(img, (size-w)/2, (size-h)/2, w, h);
+      ME.objectPhoto = canvas.toDataURL('image/jpeg', 0.75);
+      const prev = document.getElementById(previewId);
+      prev.src = ME.objectPhoto; prev.classList.remove('hidden');
+      document.getElementById(dropId).textContent = '✅ Photo added';
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
 /* ============================================================
    BACKEND ADAPTER — same call shape whether demo or supabase
    ============================================================ */
@@ -430,6 +474,7 @@ function startSync(){
     const [g, ps] = await Promise.all([DB.getGame(ROOM), DB.listPlayers(ROOM)]);
     if(g){ const changed = JSON.stringify(g)!==JSON.stringify(gameRow); gameRow=g; if(changed) onGameChange(); }
     playersCache = ps; onPlayersChange();
+    if(gameRow && gameRow.status==='playing') pollRoundProgress();
   }, 1200);
   if(bc) bc.onmessage = ()=>{}; // poll handles refresh already
 }
@@ -488,7 +533,7 @@ async function createGame(){
     duration_minutes: duration, status: 'lobby',
     state: { enabledModes: modes, singleRound: isSingle, session: null }
   });
-  await DB.addPlayer({ id: ME.id, game_code: code, name, score:0, is_host:true, avatar: ME.avatar||null, profile_answers:answers, profile_submitted:true });
+  await DB.addPlayer({ id: ME.id, game_code: code, name, score:0, is_host:true, avatar: ME.avatar||null, object_photo: ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
 
   renderLobby(duration, isSingle);
   startSync();
@@ -511,7 +556,7 @@ async function joinGame(){
   ROOM = code;
   ME.id = uid(); ME.name = name; ME.isHost = false;
   const answers = collectProfileAnswers('join-profile-qs');
-  await DB.addPlayer({ id: ME.id, game_code: code, name, phone, score:0, is_host:false, avatar: ME.avatar||null, profile_answers:answers, profile_submitted:true });
+  await DB.addPlayer({ id: ME.id, game_code: code, name, phone, score:0, is_host:false, avatar: ME.avatar||null, object_photo: ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
 
   gameRow = g;
   renderLobby(g.duration_minutes, !!g.state.singleRound);
@@ -543,6 +588,26 @@ function renderLobby(duration, isSingle){
   document.getElementById('lobby-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(joinUrl);
   document.getElementById('host-controls').classList.toggle('hidden', !ME.isHost);
   document.getElementById('guest-waiting').classList.toggle('hidden', ME.isHost);
+}
+
+async function shareInvite(){
+  const joinUrl = location.origin + location.pathname + '?join=' + ROOM;
+  const shareData = {
+    title: "So We've Got Time",
+    text: `Join our game — room code ${ROOM}:`,
+    url: joinUrl
+  };
+  if(navigator.share){
+    try{ await navigator.share(shareData); }
+    catch(e){ /* user backed out of the share sheet — no-op */ }
+    return;
+  }
+  try{
+    await navigator.clipboard.writeText(joinUrl);
+    toast('Link copied — paste it into a text or email');
+  }catch(e){
+    toast(joinUrl);
+  }
 }
 
 function onPlayersChange(){
@@ -658,11 +723,33 @@ function pickPhoto(){
   return { type:'photo', photo:person.avatar, prompt:'Zoomed in… who is it?', options:order.map(x=>x.n), correctIndex:order.findIndex(x=>x.i===0) };
 }
 
+function pickObjectGuess(){
+  const withPhotos = playersCache.filter(p=>p.object_photo);
+  if(withPhotos.length < 2) return pickTrivia();
+  const person = withPhotos[Math.floor(Math.random()*withPhotos.length)];
+  const distractors = playersCache.filter(p=>p.id!==person.id).sort(()=>Math.random()-0.5).slice(0,3);
+  const names = [person.name, ...distractors.map(d=>d.name)];
+  while(names.length<4) names.push('—');
+  const order = names.map((n,i)=>({n,i})).sort(()=>Math.random()-0.5);
+  return { type:'object', subtype:'guess', photo:person.object_photo, prompt:'Whose object is this?', options:order.map(x=>x.n), correctIndex:order.findIndex(x=>x.i===0) };
+}
+
+function pickObjectVote(){
+  const withPhotos = playersCache.filter(p=>p.object_photo);
+  if(withPhotos.length < 2) return pickTrivia();
+  const entries = withPhotos.map(p=>({playerId:p.id, photo:p.object_photo})).sort(()=>Math.random()-0.5);
+  return { type:'object', subtype:'vote', entries };
+}
+
 function buildRound(mode, roundId){
-  if(mode==='rps') return { type:'rps', id:roundId, alive: playersCache.map(p=>p.id), wave:1, resolvedWave:0 };
-  if(mode==='guesswho') return { ...pickGuessWho(), id:roundId };
-  if(mode==='photo') return { ...pickPhoto(), id:roundId, zoomX: 28+Math.random()*44, zoomY: 12+Math.random()*30 };
-  return { ...pickTrivia(), id:roundId };
+  if(mode==='rps') return { type:'rps', id:roundId, phase:'winners', wave:1, alive: playersCache.map(p=>p.id), wins:{}, losersPool:[], winnersChampion:null, losersChampion:null, startedAt: Date.now() };
+  if(mode==='guesswho') return { ...pickGuessWho(), id:roundId, startedAt: Date.now() };
+  if(mode==='photo') return { ...pickPhoto(), id:roundId, zoomX: 28+Math.random()*44, zoomY: 12+Math.random()*30, startedAt: Date.now() };
+  if(mode==='object'){
+    const sub = Math.random()<0.5 ? pickObjectGuess() : pickObjectVote();
+    return { ...sub, id:roundId, startedAt: Date.now() };
+  }
+  return { ...pickTrivia(), id:roundId, startedAt: Date.now() };
 }
 
 async function beginRounds(){
@@ -734,6 +821,7 @@ function renderRound(){
   if(!gameRow || gameRow.status!=='playing') return;
   if(gameRow.state.singleRound) updateSingleRoundProgress();
   const r = gameRow.state.round;
+  if(r.standingsUntil && Date.now() < r.standingsUntil){ renderStandingsView(r); return; }
   const tag = document.getElementById('round-tag');
   const body = document.getElementById('round-body');
   const status = document.getElementById('round-status');
@@ -741,25 +829,31 @@ function renderRound(){
   hostCtl.innerHTML=''; hostCtl.classList.add('hidden');
 
   if(r.type==='rps'){ tag.textContent='RPS Tournament'; tag.className='mode-tag rps'; renderRPS(r, body, status, hostCtl); return; }
+  if(r.type==='object' && r.subtype==='vote'){ tag.textContent='Object Photos · Vote'; tag.className='mode-tag object'; renderObjectVote(r, body, status, hostCtl); return; }
 
-  tag.textContent = r.type==='trivia' ? 'Trivia · '+r.category : r.type==='guesswho' ? 'Guess Who' : 'Photo Zoom';
-  tag.className = 'mode-tag '+r.type;
+  tag.textContent = r.type==='trivia' ? 'Trivia · '+r.category : r.type==='guesswho' ? 'Guess Who' : r.type==='object' ? 'Object Photos · Guess' : 'Photo Zoom';
+  tag.className = 'mode-tag ' + (r.type==='object' ? 'object' : r.type);
 
   let html = '';
   if(r.type==='photo'){
     html += `<div class="zoom-frame"><img src="${r.photo}" style="left:-${r.zoomX}%;top:-${r.zoomY}%"></div>`;
+  }
+  if(r.type==='object' && r.subtype==='guess'){
+    html += `<div class="object-frame"><img src="${r.photo}"></div>`;
   }
   html += `<div class="prompt-text">${r.prompt}</div>`;
   html += r.options.map((o,i)=>`<button class="option-btn" data-i="${i}" onclick="chooseOption(${i})" style="margin-top:8px">${o}</button>`).join('');
   body.innerHTML = html;
 
   refreshAnswerLock();
+  showForceResolveButton(hostCtl);
+  status.textContent = localAnswered ? 'Answer locked in! Waiting on others…' : (ME.isHost ? "Everyone's answering on their phones…" : "Tap your answer!");
+}
 
-  if(ME.isHost){
-    hostCtl.classList.remove('hidden');
-    hostCtl.innerHTML = `<button class="btn-mint" onclick="revealAndAdvance()">Reveal answer & next round</button>`;
-  }
-  status.textContent = ME.isHost ? "Everyone's answering on their phones…" : "Tap your answer!";
+function showForceResolveButton(hostCtl){
+  if(!ME.isHost) return;
+  hostCtl.classList.remove('hidden');
+  hostCtl.innerHTML = `<button class="btn-ghost" onclick="forceResolveNow()" style="font-size:13px;padding:10px">⏭ Everyone's answered — resolve now</button>`;
 }
 
 async function chooseOption(i){
@@ -770,13 +864,55 @@ async function chooseOption(i){
     if(parseInt(b.dataset.i)===i) b.classList.add('chosen');
   });
   await DB.addAnswer({ game_code:ROOM, round_id:gameRow.state.round.id, player_id:ME.id, payload:{choice:i} });
-  document.getElementById('round-status').textContent = 'Answer locked in!';
+  document.getElementById('round-status').textContent = 'Answer locked in! Waiting on others…';
 }
 
 function refreshAnswerLock(){
   if(!ME.isHost && localAnswered){
     document.querySelectorAll('.option-btn').forEach(b=>b.disabled=true);
   }
+}
+
+/* ---- Object Photos · Vote (grid of everyone's object photo, tap to vote) ---- */
+function renderObjectVote(r, body, status, hostCtl){
+  let html = `<div class="prompt-text">Vote for the best object photo!</div>`;
+  html += `<div class="vote-grid">` + r.entries.map(e=>
+    `<div class="vote-item" data-pid="${e.playerId}" onclick="chooseVote('${e.playerId}')"><img src="${e.photo}"></div>`
+  ).join('') + `</div>`;
+  body.innerHTML = html;
+  if(localAnswered){
+    document.querySelectorAll('.vote-item').forEach(el=>{ el.style.pointerEvents='none'; });
+  }
+  status.textContent = localAnswered ? 'Vote locked in! Waiting on others…' : 'Tap a photo to vote';
+  showForceResolveButton(hostCtl);
+}
+
+async function chooseVote(playerId){
+  if(localAnswered) return;
+  localAnswered = true;
+  document.querySelectorAll('.vote-item').forEach(el=>{
+    el.style.pointerEvents='none';
+    if(el.dataset.pid===playerId) el.classList.add('chosen');
+  });
+  await DB.addAnswer({ game_code:ROOM, round_id:gameRow.state.round.id, player_id:ME.id, payload:{vote:playerId} });
+  document.getElementById('round-status').textContent = 'Vote locked in! Waiting on others…';
+}
+
+async function resolveObjectVote(){
+  const r = gameRow.state.round;
+  const answers = await DB.listAnswers(ROOM, r.id);
+  const tally = {};
+  answers.forEach(a=>{ const v=a.payload.vote; if(v) tally[v]=(tally[v]||0)+1; });
+  for(const id of Object.keys(tally)){
+    const p = playersCache.find(x=>x.id===id);
+    if(p) await DB.updatePlayer(p.id, { score:(p.score||0) + tally[id]*5 });
+  }
+  const maxVotes = Math.max(0, ...Object.values(tally));
+  const winnerNames = Object.keys(tally).filter(id=>tally[id]===maxVotes && maxVotes>0)
+    .map(id=>(playersCache.find(p=>p.id===id)||{}).name).filter(Boolean);
+  const msg = winnerNames.length ? `🏆 Best object photo: ${winnerNames.join(' & ')}!` : 'Object vote complete!';
+  await showStandings(r, msg);
+  await nextRound();
 }
 
 async function revealAndAdvance(){
@@ -797,11 +933,78 @@ async function revealAndAdvance(){
       if(p) await DB.updatePlayer(p.id, { score: (p.score||0)+pts });
     }
   }
-  await sleep(1400);
+  await showStandings(r, 'Round complete!');
   await nextRound();
 }
 
 function sleep(ms){ return new Promise(res=>setTimeout(res,ms)); }
+
+/* ---- shared standings screen shown after every mini game ---- */
+async function showStandings(r, message){
+  playersCache = await DB.listPlayers(ROOM); // pull fresh scores before displaying
+  const standingsUntil = Date.now() + 3200;
+  await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, standingsMessage:message, standingsUntil}} });
+  await sleep(3200);
+}
+
+function renderStandingsView(r){
+  const tag = document.getElementById('round-tag');
+  const body = document.getElementById('round-body');
+  const status = document.getElementById('round-status');
+  const hostCtl = document.getElementById('host-round-controls');
+  hostCtl.innerHTML=''; hostCtl.classList.add('hidden');
+  tag.textContent = 'Standings';
+  tag.className = 'mode-tag';
+  const sorted = [...playersCache].sort((a,b)=>(b.score||0)-(a.score||0));
+  let html = `<div class="prompt-text center">${r.standingsMessage||'Standings'}</div>`;
+  html += `<div class="scoreboard" style="margin-top:10px">` + sorted.map((p,i)=>{
+    const av = p.avatar ? `<img class="avatar" src="${p.avatar}">` : `<div class="avatar">${(p.name[0]||'?').toUpperCase()}</div>`;
+    const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
+    return `<div class="score-row ${p.id===ME.id?'me':''}"><span class="rank">${i+1}</span>${av}<span class="nm">${p.name} ${medal}</span><span class="pts">${p.score||0}</span></div>`;
+  }).join('') + `</div>`;
+  body.innerHTML = html;
+  status.textContent = 'Next round starting soon…';
+}
+
+function currentRoundKey(){
+  const r = gameRow.state.round;
+  return r.type==='rps' ? r.id+':w'+r.wave+':'+r.phase : r.id;
+}
+
+async function doResolveCurrentRound(){
+  const r = gameRow.state.round;
+  if(r.type==='rps') return resolveRPSWave();
+  if(r.type==='object' && r.subtype==='vote') return resolveObjectVote();
+  return revealAndAdvance();
+}
+
+let lastResolvedKey = '';
+let resolvingInProgress = false;
+async function pollRoundProgress(){
+  if(!ME.isHost || resolvingInProgress) return;
+  const r = gameRow.state.round;
+  if(!r || r.standingsUntil) return; // showing standings — nothing to resolve
+  const key = currentRoundKey();
+  if(key === lastResolvedKey) return;
+  const expected = r.type==='rps' ? r.alive.length : playersCache.length;
+  const roundIdForAnswers = r.type==='rps' ? (r.id+':w'+r.wave+':'+r.phase) : r.id;
+  const answers = await DB.listAnswers(ROOM, roundIdForAnswers);
+  const timedOut = r.startedAt && (Date.now()-r.startedAt > 25000);
+  if(expected>0 && (answers.length>=expected || timedOut)){
+    lastResolvedKey = key;
+    resolvingInProgress = true;
+    try{ await doResolveCurrentRound(); }
+    finally{ resolvingInProgress = false; }
+  }
+}
+
+async function forceResolveNow(){
+  if(resolvingInProgress) return;
+  lastResolvedKey = currentRoundKey();
+  resolvingInProgress = true;
+  try{ await doResolveCurrentRound(); }
+  finally{ resolvingInProgress = false; }
+}
 
 async function nextRound(){
   if(gameRow.state.singleRound){
@@ -822,43 +1025,42 @@ async function nextRound(){
   await DB.updateGame(ROOM, { state:{...gameRow.state, round} });
 }
 
-/* ---- RPS tournament ---- */
+/* ---- RPS: tournament bracket with a losers bracket ----
+   Byes: if the wave has an odd number of players, the bye goes to
+   whoever has the most wins so far this phase (a reward for winning).
+   On the very first wave everyone's tied at 0, so the bye is random. */
 function renderRPS(r, body, status, hostCtl){
+  const phaseLabel = r.phase==='winners' ? 'Winners Bracket' : 'Losers Bracket';
   const aliveNames = r.alive.map(id=>(playersCache.find(p=>p.id===id)||{}).name).filter(Boolean);
-  let html = `<div class="prompt-text">Wave ${r.wave} — ${aliveNames.length} left</div>`;
+  let html = `<div class="prompt-text">${phaseLabel} · Wave ${r.wave}</div>`;
   html += `<p class="small">${aliveNames.join(' · ')}</p>`;
   const amAlive = r.alive.includes(ME.id);
-  if(amAlive && r.alive.length>1){
+  if(amAlive){
     html += `<div class="rps-choices">
       <button onclick="rpsThrow('rock')" id="rps-rock">🪨</button>
       <button onclick="rpsThrow('paper')" id="rps-paper">📄</button>
       <button onclick="rpsThrow('scissors')" id="rps-scissors">✂️</button>
     </div>`;
-  } else if(!amAlive){
-    html += `<p class="small center">You're out this round — cheer them on!</p>`;
+  } else if(r.phase==='winners' && (r.losersPool||[]).includes(ME.id)){
+    html += `<p class="small center">You dropped to the losers bracket — hang tight, it plays after the winners bracket wraps up.</p>`;
+  } else if(r.phase==='losers' && ME.id===r.winnersChampion){
+    html += `<p class="small center">🏆 You won the winners bracket! Watching the losers bracket duke it out for 2nd.</p>`;
   } else {
-    html += `<p class="prompt-text center">🏆 ${aliveNames[0]} wins the tournament!</p>`;
+    html += `<p class="small center">You're out this round — cheer them on!</p>`;
   }
   body.innerHTML = html;
   if(localAnswered){
     document.querySelectorAll('.rps-choices button').forEach(b=>b.disabled=true);
   }
-  status.textContent = amAlive && r.alive.length>1 ? (localAnswered?'Locked in — waiting on others…':'Rock, paper, or scissors?') : '';
-
-  if(ME.isHost){
-    hostCtl.classList.remove('hidden');
-    if(r.alive.length<=1){
-      hostCtl.innerHTML = `<button class="btn-mint" onclick="finishRPS()">Award points & next round</button>`;
-    } else {
-      hostCtl.innerHTML = `<button class="btn-mint" onclick="resolveRPSWave()">Resolve this wave</button>`;
-    }
-  }
+  status.textContent = amAlive ? (localAnswered?'Locked in — waiting on others…':'Rock, paper, or scissors?') : '';
+  if(r.alive.length>0) showForceResolveButton(hostCtl);
 }
 
 async function rpsThrow(choice){
   if(localAnswered) return;
   localAnswered = true;
-  await DB.addAnswer({ game_code:ROOM, round_id:gameRow.state.round.id+':w'+gameRow.state.round.wave, player_id:ME.id, payload:{choice} });
+  const r = gameRow.state.round;
+  await DB.addAnswer({ game_code:ROOM, round_id:r.id+':w'+r.wave+':'+r.phase, player_id:ME.id, payload:{choice} });
   document.querySelectorAll('.rps-choices button').forEach(b=>b.disabled=true);
   document.getElementById('round-status').textContent = 'Locked in — waiting on others…';
 }
@@ -867,35 +1069,75 @@ function rpsBeats(a,b){
   return (a==='rock'&&b==='scissors')||(a==='paper'&&b==='rock')||(a==='scissors'&&b==='paper');
 }
 
-async function resolveRPSWave(){
-  const r = gameRow.state.round;
-  const answers = await DB.listAnswers(ROOM, r.id+':w'+r.wave);
-  const byPlayer = {}; answers.forEach(a=> byPlayer[a.player_id]=a.payload.choice);
-  const alive = [...r.alive];
-  // pair up
-  const shuffled = [...alive].sort(()=>Math.random()-0.5);
-  const winners = new Set(); const losers = new Set();
-  for(let i=0;i<shuffled.length;i+=2){
-    const p1=shuffled[i], p2=shuffled[i+1];
-    if(!p2){ winners.add(p1); continue; } // bye
-    const c1=byPlayer[p1], c2=byPlayer[p2];
-    if(!c1 && !c2){ winners.add(p1); continue; }
-    if(!c1){ winners.add(p2); continue; }
-    if(!c2){ winners.add(p1); continue; }
-    if(c1===c2){ winners.add(p1); winners.add(p2); continue; } // tie -> both advance to re-throw
-    if(rpsBeats(c1,c2)) winners.add(p1); else winners.add(p2);
-  }
-  const newAlive = [...winners];
-  await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, wave:r.wave+1}} });
+function pickByeId(alivePool, wins){
+  const maxWins = Math.max(...alivePool.map(id=>wins[id]||0));
+  const candidates = alivePool.filter(id=>(wins[id]||0)===maxWins);
+  return candidates[Math.floor(Math.random()*candidates.length)];
 }
 
-async function finishRPS(){
+async function resolveRPSWave(){
   const r = gameRow.state.round;
-  const championId = r.alive[0];
-  const champ = playersCache.find(p=>p.id===championId);
-  if(champ) await DB.updatePlayer(champ.id, { score:(champ.score||0)+30 });
-  await sleep(800);
-  await nextRound();
+  const answers = await DB.listAnswers(ROOM, r.id+':w'+r.wave+':'+r.phase);
+  const byPlayer = {}; answers.forEach(a=> byPlayer[a.player_id]=a.payload.choice);
+  const alive = [...r.alive];
+  const wins = {...(r.wins||{})};
+
+  let byeId = null, pool = alive;
+  if(alive.length % 2 === 1 && alive.length>1){
+    byeId = pickByeId(alive, wins);
+    pool = alive.filter(id=>id!==byeId);
+  }
+  const shuffled = [...pool].sort(()=>Math.random()-0.5);
+  const winners = new Set(); const losersThisWave = [];
+  if(byeId) winners.add(byeId);
+  for(let i=0;i<shuffled.length;i+=2){
+    const p1=shuffled[i], p2=shuffled[i+1];
+    const c1=byPlayer[p1], c2=byPlayer[p2];
+    let w,l;
+    if(!c1 && !c2){ w=p1; l=p2; }
+    else if(!c1){ w=p2; l=p1; }
+    else if(!c2){ w=p1; l=p2; }
+    else if(c1===c2){ w = Math.random()<0.5?p1:p2; l = (w===p1?p2:p1); } // tie-break by coin flip to keep things moving
+    else { w = rpsBeats(c1,c2)? p1:p2; l = (w===p1?p2:p1); }
+    winners.add(w); losersThisWave.push(l);
+    wins[w] = (wins[w]||0)+1;
+  }
+  const newAlive = [...winners];
+
+  if(r.phase==='winners'){
+    const newLosersPool = [...(r.losersPool||[]), ...losersThisWave];
+    if(newAlive.length<=1){
+      const championId = newAlive[0];
+      const champ = playersCache.find(p=>p.id===championId);
+      if(champ) await DB.updatePlayer(champ.id, { score:(champ.score||0)+30 });
+      if(newLosersPool.length<=1){
+        if(newLosersPool.length===1){
+          const lchamp = playersCache.find(p=>p.id===newLosersPool[0]);
+          if(lchamp) await DB.updatePlayer(lchamp.id, { score:(lchamp.score||0)+15 });
+        }
+        const finalRound = {...r, phase:'done', alive:[], wins, losersPool:newLosersPool, winnersChampion:championId, losersChampion:newLosersPool[0]||null};
+        await showStandings(finalRound, champ?`🏆 ${champ.name} wins the RPS tournament!`:'RPS tournament complete!');
+        await nextRound();
+      } else {
+        const nextPhaseRound = {...r, phase:'losers', wave:1, alive:newLosersPool, losersPool:[], wins:{}, winnersChampion:championId, startedAt:Date.now()};
+        await DB.updateGame(ROOM, { state:{...gameRow.state, round: nextPhaseRound} });
+      }
+    } else {
+      await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, losersPool:newLosersPool, wins, wave:r.wave+1, startedAt:Date.now()}} });
+    }
+  } else { // losers phase
+    if(newAlive.length<=1){
+      const lchamp = playersCache.find(p=>p.id===newAlive[0]);
+      if(lchamp) await DB.updatePlayer(lchamp.id, { score:(lchamp.score||0)+15 });
+      const finalRound = {...r, phase:'done', alive:[], wins, losersChampion:newAlive[0]};
+      const winChamp = playersCache.find(p=>p.id===r.winnersChampion);
+      const msg = `🏆 ${winChamp?winChamp.name:'?'} wins the tournament! 🥈 ${lchamp?lchamp.name:'?'} takes the losers bracket.`;
+      await showStandings(finalRound, msg);
+      await nextRound();
+    } else {
+      await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, wins, wave:r.wave+1, startedAt:Date.now()}} });
+    }
+  }
 }
 
 /* re-render round UI whenever state refreshes mid-round (poll tick) */
@@ -903,9 +1145,11 @@ const _origOnGameChange = onGameChange;
 onGameChange = function(){
   _origOnGameChange();
   if(gameRow && gameRow.status==='playing'){
-    // detect fresh round id -> reset local lock
+    const r = gameRow.state.round;
+    if(r.standingsUntil && Date.now() < r.standingsUntil){ renderStandingsView(r); return; }
+    // detect fresh round/wave/phase -> reset local lock
     if(!renderRound._lastRoundKey) renderRound._lastRoundKey='';
-    const key = gameRow.state.round.id + (gameRow.state.round.wave||'');
+    const key = r.id + (r.wave||'') + (r.phase||'');
     if(key !== renderRound._lastRoundKey){
       renderRound._lastRoundKey = key;
       localAnswered = false;
