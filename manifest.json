@@ -1,9 +1,0 @@
-{
-  "name": "So We've Got Time",
-  "short_name": "Got Time",
-  "start_url": "./index.html",
-  "display": "standalone",
-  "background_color": "#16213E",
-  "theme_color": "#16213E",
-  "icons": []
-}
