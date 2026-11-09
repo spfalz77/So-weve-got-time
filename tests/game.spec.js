@@ -383,7 +383,9 @@ test('rock-paper-scissors: find your opponent, ready up, best of three', async (
 
   // standings show the winner and the bracket with the final score
   await expect(guest.locator('#round-body')).toContainText('Sam wins the RPS tournament', { timeout: 8_000 });
-  await expect(guest.locator('.bracket')).toContainText('2–1');
+  // players are listed in pairing order, so the score reads 2–1 or 1–2
+  await expect(guest.locator('.bracket')).toContainText(/Sam\s*2–1\s*Alex|Alex\s*1–2\s*Sam/);
+  await expect(guest.locator('.bracket .won')).toHaveText('Sam');
 
   await expect(host.locator('#screen-results')).toHaveClass(/active/, { timeout: 10_000 });
   const scores = await host.evaluate(() => Object.fromEntries(playersCache.map((p) => [p.name, p.score])));
