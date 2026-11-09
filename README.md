@@ -22,6 +22,8 @@ There are no logins, so anyone with the publishable key can read the tables. The
 - whole games are hidden after 3h and deleted by a cleanup job every 10 minutes
 - nothing can be deleted through the API
 
+What's still open: anyone with the public key can read games from the last 3 hours. The fix (per-room access with anonymous sign-ins) is written up in [docs/privacy-anonymous-auth.md](docs/privacy-anonymous-auth.md).
+
 ## Tests
 
 `tests/game.spec.js` has simulated phones play real games:
@@ -44,7 +46,7 @@ A second workflow pings the live database every 3 days so the free Supabase proj
 
 ## Next steps
 
-- Per-room privacy via Supabase Anonymous Sign-Ins + RLS (only players in a room can read it), for when the app is shared beyond friends and family
+- Per-room privacy via anonymous sign-ins, for when the app is shared beyond friends and family. See [docs/privacy-anonymous-auth.md](docs/privacy-anonymous-auth.md)
 - Supabase Realtime instead of polling
 - App icons in `manifest.json` so phones offer "Add to Home Screen"
 - A bigger trivia bank
