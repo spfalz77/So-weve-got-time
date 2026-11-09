@@ -1,28 +1,77 @@
 name: Game test
 
+# Simulated phones play full games against a real local Supabase
+# (started from supabase/migrations), in both browser engines:
+# chromium ≈ Android, webkit ≈ iPhone Safari.
+
 on:
   push:
     branches: [main]
+    paths-ignore: ['**.md']
   pull_request:
+    paths-ignore: ['**.md']
   workflow_dispatch:
+    inputs:
+      repeat:
+        description: Run each test this many times (flakiness check)
+        default: '1'
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   play-through:
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, webkit]
+    name: phones (${{ matrix.browser }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start local Supabase (applies supabase/migrations)
+        # runners sometimes have a port still held; stop cleanly and retry once
+        run: |
+          EXCLUDE=studio,imgproxy,edge-runtime,logflare,vector,supavisor,storage-api,postgres-meta,realtime
+          supabase start -x "$EXCLUDE" || { supabase stop --no-backup || true; sleep 10; supabase start -x "$EXCLUDE"; }
+
       - run: npm ci
-      - run: npx playwright install --with-deps chromium
-      - run: npx playwright test
+
+      - name: Cache Playwright browsers
+        id: pw-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: pw-${{ runner.os }}-${{ matrix.browser }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install ${{ matrix.browser }}
+        run: |
+          if [ "${{ steps.pw-cache.outputs.cache-hit }}" = "true" ]; then
+            npx playwright install-deps ${{ matrix.browser }}
+          else
+            npx playwright install --with-deps ${{ matrix.browser }}
+          fi
+
+      - name: Play games
+        run: |
+          eval "$(supabase status -o env | sed 's/^/export /')"
+          SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" \
+            npx playwright test --project=${{ matrix.browser }} --repeat-each "${{ github.event.inputs.repeat || '1' }}"
+
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.browser }}
           path: |
             playwright-report/
             test-results/

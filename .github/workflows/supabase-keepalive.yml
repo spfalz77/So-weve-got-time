@@ -1,0 +1,32 @@
+name: Supabase keep-alive
+
+# Free Supabase projects pause after ~7 days without activity.
+# This runs a tiny read query every 3 days so the project stays awake.
+# Uses the same public key the app already ships in index.html.
+
+on:
+  schedule:
+    - cron: '23 15 */3 * *'   # every 3 days at 15:23 UTC
+  workflow_dispatch: {}        # "Run workflow" button for a manual ping
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: index.html
+          sparse-checkout-cone-mode: false
+      - name: Query the database
+        run: |
+          URL=$(grep -oE 'const SUPABASE_URL = "https://[a-z0-9]+\.supabase\.co"' index.html | grep -oE 'https://[^"]+')
+          KEY=$(grep -oE 'const SUPABASE_ANON_KEY = "[^"]+"' index.html | sed -E 's/.*"([^"]+)"/\1/')
+          test -n "$URL" -a -n "$KEY" || { echo "Supabase URL/key not found in index.html"; exit 1; }
+          CODE=$(curl -s -o /tmp/out -w '%{http_code}' --retry 3 --retry-delay 20 \
+            "$URL/rest/v1/swgt_games?select=code&limit=1" -H "apikey: $KEY" -H "Authorization: Bearer $KEY")
+          echo "HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            cat /tmp/out
+            echo "::error::Supabase did not respond normally (HTTP $CODE). The project may be paused: restore it in the Supabase dashboard."
+            exit 1
+          fi

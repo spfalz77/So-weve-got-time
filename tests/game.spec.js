@@ -1,55 +1,111 @@
-// End-to-end: three "phones" play a full game in demo mode.
+// End-to-end: simulated phones play real games.
 //
-// Demo mode keeps the whole game in localStorage + BroadcastChannel, so all
-// phones share one browser context (= one shared "server"). Each phone gets
-// its own saved-session slot so they behave like separate devices.
+// Two backends:
+//   * Local Supabase (CI): set SUPABASE_URL + SUPABASE_ANON_KEY (from
+//     `supabase status -o env`). Each phone is its own browser context —
+//     separate storage, separate network — exactly like separate devices,
+//     talking to a real database with the real migrations and RLS.
+//   * Demo mode (no env vars): the game lives in localStorage, so all
+//     phones share one context and each gets its own saved-session slot.
 //
 // Covers: instant room code, hide-answers mask, joining by QR link,
-// escaping of player names, every round type (single-round debug mode
-// plays each enabled type once), closing a tab mid-game and rejoining,
-// a late joiner, final scoreboard, and photos wiped when the game ends.
+// escaping of player names, every round type, closing a tab mid-game and
+// rejoining, a late joiner, final scoreboard, photos wiped at the end,
+// and the RPS ready / best-of-three / bracket flow.
 
 const { test, expect } = require('@playwright/test');
 const path = require('path');
+const fs = require('fs');
 
 const FACE = path.join(__dirname, 'fixtures', 'face.png');
 const OBJECT = path.join(__dirname, 'fixtures', 'object.png');
 const ROUND_TYPES = ['trivia', 'rps', 'guesswho', 'photo', 'object'];
+const SUPABASE_JS = path.join(__dirname, '..', 'node_modules', '@supabase', 'supabase-js', 'dist', 'umd', 'supabase.js');
+
+const LIVE_URL = process.env.SUPABASE_URL || '';
+const LIVE_KEY = process.env.SUPABASE_ANON_KEY || '';
+const LIVE = !!(LIVE_URL && LIVE_KEY);
+if (/xesylbmpeewicgxxiruo/.test(LIVE_URL)) throw new Error('Tests must not run against the production project');
 
 test.setTimeout(240_000);
 
-async function setupContext(browser) {
-  const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
-  // Hermetic: force demo mode and block every external request
-  // (fonts, Supabase CDN, QR image service).
+async function routeApp(context) {
+  // Hermetic: serve the app pointed at the test backend, serve supabase-js
+  // from node_modules, allow the local Supabase, block everything else
+  // (fonts, QR image service).
   await context.route('**/*', async (route) => {
     const url = route.request().url();
+    if (url.includes('cdn.jsdelivr.net/npm/@supabase/supabase-js')) {
+      return route.fulfill({ contentType: 'application/javascript', body: fs.readFileSync(SUPABASE_JS, 'utf8') });
+    }
+    if (LIVE && url.startsWith(LIVE_URL)) return route.continue();
     if (!url.startsWith('http://localhost')) return route.abort();
     if (url.includes('index.html') || url.endsWith('/') || url.includes('/?')) {
       const res = await route.fetch();
       let body = await res.text();
-      body = body.replace(/const SUPABASE_URL = "[^"]*";/, 'const SUPABASE_URL = "YOUR_TEST";');
+      if (LIVE) {
+        body = body
+          .replace(/const SUPABASE_URL = "[^"]*";/, `const SUPABASE_URL = "${LIVE_URL}";`)
+          .replace(/const SUPABASE_ANON_KEY = "[^"]*";/, `const SUPABASE_ANON_KEY = "${LIVE_KEY}";`);
+      } else {
+        body = body.replace(/const SUPABASE_URL = "[^"]*";/, 'const SUPABASE_URL = "YOUR_TEST";');
+      }
       return route.fulfill({ response: res, body });
     }
     return route.continue();
   });
-  return context;
 }
 
-function makePhoneFactory(context, errors) {
+const PHONE = { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true };
+
+async function setupContext(browser) {
+  const world = { browser, contexts: [], shared: null };
+  if (!LIVE) {
+    world.shared = await browser.newContext(PHONE);
+    await routeApp(world.shared);
+    world.contexts.push(world.shared);
+  }
+  world.close = async () => { for (const c of world.contexts) await c.close().catch(() => {}); };
+  return world;
+}
+
+function makePhoneFactory(world, errors) {
+  const contexts = {}; // live: one context per phone name, reused when that phone "reopens"
   return async function phone(name) {
-    const page = await context.newPage();
+    let page;
+    if (LIVE) {
+      let ctx = contexts[name];
+      if (!ctx) {
+        ctx = contexts[name] = await world.browser.newContext(PHONE);
+        await routeApp(ctx);
+        world.contexts.push(ctx);
+      }
+      page = await ctx.newPage();
+    } else {
+      page = await world.shared.newPage();
+      // give each phone its own saved session slot
+      await page.addInitScript((slot) => {
+        const g = Storage.prototype.getItem, s = Storage.prototype.setItem, r = Storage.prototype.removeItem;
+        const map = (k) => (k === 'swgt_session' ? `${k}_${slot}` : k);
+        Storage.prototype.getItem = function (k) { return g.call(this, map(k)); };
+        Storage.prototype.setItem = function (k, v) { return s.call(this, map(k), v); };
+        Storage.prototype.removeItem = function (k) { return r.call(this, map(k)); };
+      }, name);
+    }
     page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
-    // give each phone its own saved session slot
-    await page.addInitScript((slot) => {
-      const g = Storage.prototype.getItem, s = Storage.prototype.setItem, r = Storage.prototype.removeItem;
-      const map = (k) => (k === 'swgt_session' ? `${k}_${slot}` : k);
-      Storage.prototype.getItem = function (k) { return g.call(this, map(k)); };
-      Storage.prototype.setItem = function (k, v) { return s.call(this, map(k), v); };
-      Storage.prototype.removeItem = function (k) { return r.call(this, map(k)); };
-    }, name);
     return page;
   };
+}
+
+// how many players in this room still have photos stored on the server
+async function photosLeftOnServer(page, code) {
+  if (!LIVE) {
+    return page.evaluate((c) => demoDB().players.filter((p) => p.game_code === c && (p.avatar || p.object_photo)).length, code);
+  }
+  const res = await fetch(`${LIVE_URL}/rest/v1/swgt_players?game_code=eq.${code}&or=(avatar.not.is.null,object_photo.not.is.null)&select=id`, {
+    headers: { apikey: LIVE_KEY, Authorization: `Bearer ${LIVE_KEY}` },
+  });
+  return (await res.json()).length;
 }
 
 async function fillProfile(page, containerId, answers) {
@@ -97,8 +153,8 @@ async function activeScreen(page) {
 
 test('a full game plays through every round type', async ({ browser }) => {
   const errors = [];
-  const context = await setupContext(browser);
-  const phone = makePhoneFactory(context, errors);
+  const world = await setupContext(browser);
+  const phone = makePhoneFactory(world, errors);
 
   // ---------- host opens a room: code is up immediately ----------
   const host = await phone('host');
@@ -206,8 +262,7 @@ test('a full game plays through every round type', async ({ browser }) => {
   expect(await host.locator('#final-scoreboard i').count()).toBe(0);
 
   // photos are wiped from the "server" once the game ends
-  await expect.poll(() => host.evaluate((c) =>
-    demoDB().players.filter((p) => p.game_code === c && (p.avatar || p.object_photo)).length, code)).toBe(0);
+  await expect.poll(() => photosLeftOnServer(host, code)).toBe(0);
 
   // finished game: no rejoin offer
   const after = await phone('g1');
@@ -216,13 +271,13 @@ test('a full game plays through every round type', async ({ browser }) => {
   await expect(after.locator('#rejoin-btn')).toBeHidden();
 
   expect(errors).toEqual([]);
-  await context.close();
+  await world.close();
 });
 
 test('host can close the tab in the lobby and come back to the same room', async ({ browser }) => {
   const errors = [];
-  const context = await setupContext(browser);
-  const phone = makePhoneFactory(context, errors);
+  const world = await setupContext(browser);
+  const phone = makePhoneFactory(world, errors);
 
   let host = await phone('host');
   await host.goto('/');
@@ -244,13 +299,13 @@ test('host can close the tab in the lobby and come back to the same room', async
   await expect(host.locator('#host-profile-qs input').first()).toHaveValue('Hawaii');
 
   expect(errors).toEqual([]);
-  await context.close();
+  await world.close();
 });
 
 test('rock-paper-scissors: find your opponent, ready up, best of three', async ({ browser }) => {
   const errors = [];
-  const context = await setupContext(browser);
-  const phone = makePhoneFactory(context, errors);
+  const world = await setupContext(browser);
+  const phone = makePhoneFactory(world, errors);
 
   const host = await phone('host');
   await host.goto('/');
@@ -320,13 +375,13 @@ test('rock-paper-scissors: find your opponent, ready up, best of three', async (
   expect(scores.Alex).toBe(15);
 
   expect(errors).toEqual([]);
-  await context.close();
+  await world.close();
 });
 
 test('rock-paper-scissors with an odd number: bye, then losers bracket', async ({ browser }) => {
   const errors = [];
-  const context = await setupContext(browser);
-  const phone = makePhoneFactory(context, errors);
+  const world = await setupContext(browser);
+  const phone = makePhoneFactory(world, errors);
 
   const host = await phone('host');
   await host.goto('/');
@@ -361,5 +416,5 @@ test('rock-paper-scissors with an odd number: bye, then losers bracket', async (
   const total = await host.evaluate(() => playersCache.reduce((a, p) => a + (p.score || 0), 0));
   expect(total).toBe(45); // 30 winners champ + 15 losers champ
   expect(errors).toEqual([]);
-  await context.close();
+  await world.close();
 });

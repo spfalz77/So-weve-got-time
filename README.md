@@ -6,7 +6,7 @@ It's one file (`index.html`) with no build step. Host it anywhere static (GitHub
 
 ## Backend
 
-Uses Supabase. Run `supabase-schema.sql` in the Supabase SQL editor, then put your project URL and publishable (anon) key at the top of the script in `index.html`. With the placeholder `YOUR_...` values it runs in **demo mode**, which works across tabs on one device for testing.
+Uses Supabase. Run the SQL in `supabase/migrations/` (in order) in the Supabase SQL editor, then put your project URL and publishable (anon) key at the top of the script in `index.html`. With the placeholder `YOUR_...` values it runs in **demo mode**, which works across tabs on one device for testing.
 
 ## How it works
 
@@ -24,15 +24,23 @@ There are no logins, so anyone with the publishable key can read the tables. The
 
 ## Tests
 
-`tests/game.spec.js` plays a whole game in demo mode with simulated phones. It covers the instant room code, the hide-answers mask, joining by link, HTML in player names, every round type, closing a tab mid-game and rejoining, a late joiner, the final scoreboard, and photos being wiped at the end. A second test checks that the host can leave the lobby and come back.
+`tests/game.spec.js` has simulated phones play real games:
+- a full game through every round type, with a player closing the tab mid-game and rejoining, a late joiner, HTML in a player name, the final scoreboard, and photos being wiped at the end
+- the host leaving the setup screen and coming back
+- rock-paper-scissors: the ready screen, a tie that doesn't count, best of three, and the bracket
+- rock-paper-scissors with an odd number of players: the bye and the losers bracket
 
-It runs on GitHub Actions for every push to `main` and every pull request. To run it locally:
+On GitHub (every pull request and push to `main`), the tests start a real local Supabase from `supabase/migrations/`, give every phone its own separate browser, and run in both Chrome's engine (Android) and Safari's engine (iPhone).
+
+Locally, with no Supabase running, they use demo mode instead:
 
 ```
 npm install
 npx playwright install chromium
-npm test
+npx playwright test --project=chromium
 ```
+
+A second workflow pings the live database every 3 days so the free Supabase project doesn't pause.
 
 ## Next steps
 
