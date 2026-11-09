@@ -141,6 +141,22 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
 .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--charcoal);color:#fff;padding:10px 18px;border-radius:999px;font-weight:700;font-size:14px;z-index:99;box-shadow:0 6px 20px rgba(0,0,0,.3);}
 .footer-note{font-size:12px;color:var(--muted);text-align:center;margin-top:6px;opacity:.7;}
 .file-drop{border:2px dashed #D8CFB6;border-radius:12px;padding:14px;text-align:center;color:#8B8367;font-weight:700;font-size:13px;cursor:pointer;}
+.host-top{padding-top:4px;padding-bottom:4px;}
+.ticket-top.compact{padding:14px 16px 10px;}
+.ticket-top.compact .ticket-code{font-size:40px;margin:2px 0 0;}
+.host-top .ticket-bottom{padding:12px 16px 14px;}
+.host-top .qr-wrap img{width:104px;height:104px;}
+.share-mini{padding:8px 12px;font-size:13px;margin-top:8px;box-shadow:0 3px 0 #4FA891;}
+.mask-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.switch{display:flex;align-items:center;gap:8px;margin:0;cursor:pointer;text-transform:none;letter-spacing:0;font-size:13px;color:#665F4C;}
+.switch input{display:none;}
+.switch .slider{width:42px;height:24px;border-radius:999px;background:#D8CFB6;position:relative;transition:background .2s;flex:none;}
+.switch .slider::after{content:'';position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.3);}
+.switch input:checked + .slider{background:var(--ink);}
+.switch input:checked + .slider::after{transform:translateX(18px);}
+/* masked: every field is blurred except the one you're typing in */
+.maskable.masked input[type=text]:not(:focus){filter:blur(6px);}
+.maskable.masked .mask-img{filter:blur(10px);}
 .avatar-preview{width:64px;height:64px;border-radius:50%;object-fit:cover;margin:0 auto;display:block;background:#eee;}
 </style>
 </head>
@@ -155,37 +171,75 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
       <p>Waiting rooms, road trips, dinner-table lulls — start a round in seconds. Whoever starts shares a code, everyone else just taps in.</p>
     </div>
     <div class="stack" style="margin-top:8px">
-      <button class="btn-primary" onclick="go('host-setup')">🎟️ Start a game</button>
+      <button class="btn-primary" onclick="openHostSetup()">🎟️ Start a game</button>
       <button class="btn-mint" onclick="go('join')">📲 Join with a code</button>
+      <button class="btn-ghost hidden" id="rejoin-btn" onclick="rejoinSaved()">↩️ Rejoin</button>
     </div>
     <p class="footer-note" id="config-note"></p>
   </section>
 
-  <!-- HOST SETUP -->
+  <!-- HOST SETUP — room exists the moment this opens, so the code/QR
+       sits up top and everyone can join while the host fills in details -->
   <section class="screen" id="screen-host-setup">
-    <button class="btn-ghost" onclick="go('landing')" style="align-self:flex-start">← Back</button>
-    <h2>Set up the room</h2>
+    <div class="host-top">
+      <div class="ticket">
+        <div class="ticket-top compact">
+          <div class="label">Room code — everyone join now!</div>
+          <div class="ticket-code mono" id="host-code">····</div>
+        </div>
+        <div class="perf"></div>
+        <div class="ticket-bottom">
+          <div class="qr-wrap"><img id="host-qr" alt="QR code to join"></div>
+          <div class="ticket-meta">
+            <b>Scan to join</b>
+            no app, no login.<br>
+            <button class="btn-mint share-mini" onclick="shareInvite()">📤 Share link</button>
+          </div>
+        </div>
+      </div>
+      <div class="small" style="margin-top:8px">Who's in <span id="host-roster-count">(1)</span></div>
+      <div class="roster" id="host-roster" style="margin-top:6px"></div>
+    </div>
+
+    <div class="card stack" id="host-details">
+      <div class="mask-row">
+        <h3 style="margin:0">You</h3>
+        <label class="switch" title="Blur your answers so people scanning the code can't read them">
+          <input type="checkbox" id="mask-toggle" checked onchange="setMasked(this.checked)">
+          <span class="slider"></span>
+          <span class="switch-label">🙈 Hide my answers</span>
+        </label>
+      </div>
+      <div class="maskable" id="host-maskable">
+        <div class="stack">
+          <div>
+            <label>Your name</label>
+            <input type="text" id="host-name" placeholder="e.g. Sam" maxlength="18" autocomplete="off">
+          </div>
+          <div>
+            <label>Your age <span style="font-weight:400;text-transform:none;color:#B9B08C">(so we can pick trivia that fits the group)</span></label>
+            <input type="text" inputmode="numeric" id="host-age" placeholder="e.g. 34" maxlength="3" autocomplete="off">
+          </div>
+          <div>
+            <label>Add a selfie <span style="font-weight:400;text-transform:none;color:#B9B08C">(for the eyes/nose zoom round)</span></label>
+            <input type="file" accept="image/*" capture="user" id="host-photo-input" class="hidden" onchange="onAvatarChosen(event,'host-avatar-preview','host-photo-drop')">
+            <div class="file-drop" onclick="document.getElementById('host-photo-input').click()" id="host-photo-drop">📷 Tap to add a photo</div>
+            <img id="host-avatar-preview" class="avatar-preview hidden mask-img">
+          </div>
+          <div>
+            <label>Snap an object <span style="font-weight:400;text-transform:none;color:#B9B08C">(for guess-who & vote rounds)</span></label>
+            <input type="file" accept="image/*" capture="environment" id="host-object-input" class="hidden" onchange="onObjectPhotoChosen(event,'host-object-preview','host-object-drop')">
+            <div class="file-drop" onclick="document.getElementById('host-object-input').click()" id="host-object-drop">📦 Tap to snap an object near you</div>
+            <img id="host-object-preview" class="avatar-preview hidden mask-img" style="border-radius:12px">
+          </div>
+          <h3 style="margin:6px 0 0">Quick — about you</h3>
+          <p class="small" style="margin:-6px 0 0;color:#8B8367">We'll quiz the group on these later.</p>
+          <div id="host-profile-qs" class="stack"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="card stack">
-      <div>
-        <label>Your name</label>
-        <input type="text" id="host-name" placeholder="e.g. Sam" maxlength="18">
-      </div>
-      <div>
-        <label>Your age <span style="font-weight:400;text-transform:none;color:#B9B08C">(so we can pick trivia that fits the group)</span></label>
-        <input type="text" inputmode="numeric" id="host-age" placeholder="e.g. 34" maxlength="3">
-      </div>
-      <div>
-        <label>Add a selfie <span style="font-weight:400;text-transform:none;color:#B9B08C">(for the eyes/nose zoom round)</span></label>
-        <input type="file" accept="image/*" capture="user" id="host-photo-input" class="hidden" onchange="onAvatarChosen(event,'host-avatar-preview','host-photo-drop')">
-        <div class="file-drop" onclick="document.getElementById('host-photo-input').click()" id="host-photo-drop">📷 Tap to add a photo</div>
-        <img id="host-avatar-preview" class="avatar-preview hidden">
-      </div>
-      <div>
-        <label>Snap an object <span style="font-weight:400;text-transform:none;color:#B9B08C">(for guess-who & vote rounds)</span></label>
-        <input type="file" accept="image/*" capture="environment" id="host-object-input" class="hidden" onchange="onObjectPhotoChosen(event,'host-object-preview','host-object-drop')">
-        <div class="file-drop" onclick="document.getElementById('host-object-input').click()" id="host-object-drop">📦 Tap to snap an object near you</div>
-        <img id="host-object-preview" class="avatar-preview hidden" style="border-radius:12px">
-      </div>
       <div>
         <label>How long do we have?</label>
         <div class="pill-group" id="duration-pills">
@@ -207,12 +261,8 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
         </div>
       </div>
     </div>
-    <div class="card stack">
-      <h3 style="margin:0">Quick — about you</h3>
-      <p class="small" style="margin:-6px 0 0;color:#8B8367">We'll quiz the group on these later.</p>
-      <div id="host-profile-qs" class="stack"></div>
-    </div>
-    <button class="btn-primary" onclick="createGame()">Create room</button>
+    <button class="btn-primary" id="host-start-btn" onclick="hostStart()" disabled>Start — need 2+ players</button>
+    <button class="btn-ghost" onclick="leaveRoom()" style="font-size:13px;padding:10px">✕ Cancel room</button>
   </section>
 
   <!-- JOIN -->
@@ -231,10 +281,6 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
       <div>
         <label>Your age <span style="font-weight:400;text-transform:none;color:#B9B08C">(so we can pick trivia that fits the group)</span></label>
         <input type="text" inputmode="numeric" id="join-age" placeholder="e.g. 12" maxlength="3">
-      </div>
-      <div>
-        <label>Phone (optional, for reminders)</label>
-        <input type="tel" id="join-phone" placeholder="optional">
       </div>
       <div>
         <label>Add a selfie <span style="font-weight:400;text-transform:none;color:#B9B08C">(for the eyes/nose zoom round)</span></label>
@@ -368,6 +414,20 @@ function code4(){
 }
 function uid(){ return 'p_'+Math.random().toString(36).slice(2,10); }
 
+/* ---- output safety: everything typed by a player (names, answers) is
+   escaped before it touches innerHTML, and only our own resized JPEG
+   data-URLs are allowed as image sources ---- */
+function esc(s){
+  return String(s==null?'':s).replace(/[&<>"'`]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;','`':'&#96;'}[c]));
+}
+function safeSrc(s){
+  return (typeof s==='string' && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(s)) ? s : '';
+}
+function avatarHtml(p, cls){
+  const src = safeSrc(photoOf(p.id,'avatar'));
+  return src ? `<img class="${cls}" src="${src}">` : `<div class="${cls}">${esc(((p.name||'?')[0]||'?').toUpperCase())}</div>`;
+}
+
 /* pills */
 document.getElementById('duration-pills').addEventListener('click', e=>{
   const p = e.target.closest('.pill'); if(!p) return;
@@ -401,10 +461,19 @@ function onAvatarChosen(e, previewId, dropId){
       const prev = document.getElementById(previewId);
       prev.src = ME.avatar; prev.classList.remove('hidden');
       document.getElementById(dropId).textContent = '✅ Photo added';
+      savePhotoIfInRoom('avatar', ME.avatar);
     };
     img.src = ev.target.result;
   };
   reader.readAsDataURL(file);
+}
+
+/* if we're already in a room (host setting up, or rejoining), push the
+   photo straight to our player row */
+function savePhotoIfInRoom(kind, dataUrl){
+  if(!ROOM || !ME.id) return;
+  PHOTOS[ME.id] = { ...(PHOTOS[ME.id]||{avatar:null,object_photo:null}), [kind]: dataUrl };
+  DB.updatePlayer(ME.id, { [kind]: dataUrl });
 }
 
 /* object photo upload -> resized base64, centered crop (no face bias) */
@@ -424,6 +493,7 @@ function onObjectPhotoChosen(e, previewId, dropId){
       const prev = document.getElementById(previewId);
       prev.src = ME.objectPhoto; prev.classList.remove('hidden');
       document.getElementById(dropId).textContent = '✅ Photo added';
+      savePhotoIfInRoom('object_photo', ME.objectPhoto);
     };
     img.src = ev.target.result;
   };
@@ -450,16 +520,24 @@ const DB = {
   },
   async addPlayer(row){
     if(DEMO){ const db=demoDB(); db.players.push(row); demoSave(db); return row; }
-    const { data, error } = await sb.from('swgt_players').insert(row).select().single();
-    if(error) throw error; return data;
+    const { error } = await sb.from('swgt_players').insert(row);
+    if(error) throw error; return row;
   },
   async updatePlayer(id, patch){
     if(DEMO){ const db=demoDB(); const p=db.players.find(x=>x.id===id); if(p) Object.assign(p,patch); demoSave(db); return; }
     await sb.from('swgt_players').update(patch).eq('id', id);
   },
+  /* light roster — no photos, no contact info. This is what gets polled. */
   async listPlayers(code){
-    if(DEMO){ const db=demoDB(); return db.players.filter(p=>p.game_code===code); }
-    const { data } = await sb.from('swgt_players').select('*').eq('game_code', code).order('joined_at');
+    if(DEMO){ const db=demoDB(); return db.players.filter(p=>p.game_code===code).map(({avatar,object_photo,...rest})=>rest); }
+    const { data } = await sb.from('swgt_players').select(PLAYER_COLS).eq('game_code', code).order('joined_at');
+    return data||[];
+  },
+  /* photos are fetched once per player, then cached */
+  async getPhotos(ids, kind){
+    if(DEMO){ const db=demoDB(); return db.players.filter(p=>ids.includes(p.id)).map(p=>({id:p.id, [kind]:p[kind]||null})); }
+    // only rows that actually have this photo come back, so re-checks are tiny
+    const { data } = await sb.from('swgt_players').select('id,'+kind).in('id', ids).not(kind,'is',null);
     return data||[];
   },
   async addAnswer(row){
@@ -473,17 +551,65 @@ const DB = {
   }
 };
 
-/* polling-based "realtime" that works identically for demo + supabase
-   (keeps this file simple/robust — every 1.2s pull latest game+players) */
+const PLAYER_COLS = 'id,game_code,name,age,score,is_host,profile_answers,profile_submitted,joined_at';
+
+/* photo cache: { playerId: { avatar, object_photo } }. Photos never change
+   after they're uploaded, so each phone downloads each one exactly once
+   instead of every poll tick. */
+const PHOTOS = {};
+let photoFetchInFlight = false;
+function photoOf(id, kind){ const p = PHOTOS[id]; return p ? p[kind] : null; }
+/* Fetch photos for players we've never seen, and (every ~8s) re-check
+   slots that were empty — they may have added a photo since. A filled
+   slot is never downloaded again. */
+async function fetchMissingPhotos(){
+  if(photoFetchInFlight) return;
+  const now = Date.now();
+  const need = { avatar:[], object_photo:[] };
+  playersCache.forEach(p=>{
+    const c = PHOTOS[p.id];
+    const due = !c || now - (c.checkedAt||0) > 8000;
+    if(!due) return;
+    if(!c || !c.avatar) need.avatar.push(p.id);
+    if(!c || !c.object_photo) need.object_photo.push(p.id);
+  });
+  if(!need.avatar.length && !need.object_photo.length) return;
+  photoFetchInFlight = true;
+  try{
+    let changed = false;
+    for(const kind of ['avatar','object_photo']){
+      if(!need[kind].length) continue;
+      const rows = await DB.getPhotos(need[kind], kind);
+      const got = {}; rows.forEach(r=> got[r.id] = r[kind] || null);
+      need[kind].forEach(id=>{
+        const c = PHOTOS[id] || (PHOTOS[id] = { avatar:null, object_photo:null });
+        if(got[id] && got[id] !== c[kind]){ c[kind] = got[id]; changed = true; }
+      });
+    }
+    [...need.avatar, ...need.object_photo].forEach(id=> PHOTOS[id].checkedAt = now);
+    if(changed){
+      onPlayersChange();
+      if(gameRow && gameRow.status==='playing') renderRound();
+    }
+  } finally { photoFetchInFlight = false; }
+}
+
+/* polling-based "realtime" that works identically for demo + supabase.
+   Every 1.2s we pull the game row and a *light* roster (a few KB total). */
 function startSync(){
   stopSync();
-  pollTimer = setInterval(async ()=>{
+  const tick = async ()=>{
     if(!ROOM) return;
-    const [g, ps] = await Promise.all([DB.getGame(ROOM), DB.listPlayers(ROOM)]);
-    if(g){ const changed = JSON.stringify(g)!==JSON.stringify(gameRow); gameRow=g; if(changed) onGameChange(); }
-    playersCache = ps; onPlayersChange();
-    if(gameRow && gameRow.status==='playing') pollRoundProgress();
-  }, 1200);
+    try{
+      const [g, ps] = await Promise.all([DB.getGame(ROOM), DB.listPlayers(ROOM)]);
+      playersCache = ps; onPlayersChange();
+      fetchMissingPhotos();
+      if(g){ const changed = JSON.stringify(g)!==JSON.stringify(gameRow); gameRow=g; if(changed) onGameChange(); }
+      if(gameRow && gameRow.status==='playing') pollRoundProgress();
+    }catch(e){ /* flaky network — next tick will retry */ }
+  };
+  tick();
+  pollTimer = setInterval(tick, 1200);
   if(bc) bc.onmessage = ()=>{}; // poll handles refresh already
 }
 function stopSync(){ if(pollTimer) clearInterval(pollTimer); }
@@ -521,81 +647,225 @@ window.addEventListener('DOMContentLoaded', ()=>{
 });
 
 /* ============================================================
-   HOST: CREATE GAME
+   SESSION MEMORY — lets anyone who closes the tab, locks their phone
+   or reloads get straight back into their room as the same player
    ============================================================ */
-async function createGame(){
-  const name = document.getElementById('host-name').value.trim() || 'Host';
-  const age = parseInt(document.getElementById('host-age').value,10) || null;
+const SESSION_KEY = 'swgt_session';
+function saveSession(){
+  try{ localStorage.setItem(SESSION_KEY, JSON.stringify({ room:ROOM, id:ME.id, name:ME.name, isHost:ME.isHost, at:Date.now() })); }catch(e){}
+}
+function loadSession(){
+  try{
+    const s = JSON.parse(localStorage.getItem(SESSION_KEY)||'null');
+    if(s && s.room && s.id && Date.now()-s.at < 12*3600*1000) return s;
+  }catch(e){}
+  return null;
+}
+function clearSession(){ try{ localStorage.removeItem(SESSION_KEY); }catch(e){} }
+
+/* ============================================================
+   HOST: room is created the instant "Start a game" is tapped, so the
+   code + QR are up immediately and people can join while the host
+   is still typing their own details
+   ============================================================ */
+function readSettings(){
   const durEl = document.querySelector('#duration-pills .pill.selected');
   const isSingle = durEl.dataset.min === 'single';
   const duration = isSingle ? 0 : parseInt(durEl.dataset.min,10);
   const modes = [...document.querySelectorAll('#mode-pills .pill.selected')].map(p=>p.dataset.mode);
+  return { duration, isSingle, modes };
+}
+
+let creatingRoom = false;
+async function openHostSetup(){
+  go('host-setup');
+  setMasked(document.getElementById('mask-toggle').checked);
+  if(ROOM && ME.isHost) return; // already have a room
+  if(creatingRoom) return;
+  creatingRoom = true;
+  try{
+    const { duration, isSingle, modes } = readSettings();
+    ME.id = uid(); ME.name = 'Host'; ME.isHost = true;
+    let code = null;
+    for(let attempt=0; attempt<6 && !code; attempt++){
+      const c = code4();
+      try{
+        await DB.createGame({ code:c, host_id:ME.id, host_name:'Host', duration_minutes:duration, status:'lobby',
+          state:{ enabledModes:modes, singleRound:isSingle, session:null } });
+        code = c;
+      }catch(e){ /* code collision — try another */ }
+    }
+    if(!code){ toast("Couldn't create a room — check your connection"); go('landing'); return; }
+    ROOM = code;
+    await DB.addPlayer({ id:ME.id, game_code:code, name:'Host', age:null, score:0, is_host:true,
+      avatar:ME.avatar||null, object_photo:ME.objectPhoto||null, profile_answers:{}, profile_submitted:false });
+    if(ME.avatar || ME.objectPhoto) PHOTOS[ME.id] = { avatar:ME.avatar||null, object_photo:ME.objectPhoto||null, checkedAt:Date.now() };
+    saveSession();
+    renderTicket('host-code','host-qr');
+    startSync();
+  } finally { creatingRoom = false; }
+}
+
+function setMasked(on){
+  document.getElementById('host-maskable').classList.toggle('masked', !!on);
+}
+
+/* host details save as you type (debounced) so the roster shows your
+   name right away and a reload doesn't lose your answers */
+let hostSaveTimer = null;
+function queueHostSave(){ clearTimeout(hostSaveTimer); hostSaveTimer = setTimeout(saveHostDetails, 600); }
+async function saveHostDetails(){
+  if(!ROOM || !ME.isHost) return;
+  const name = document.getElementById('host-name').value.trim() || 'Host';
+  const age = parseInt(document.getElementById('host-age').value,10) || null;
+  ME.name = name; saveSession();
+  await DB.updatePlayer(ME.id, { name, age, profile_answers: collectProfileAnswers('host-profile-qs'), profile_submitted:true });
+  await DB.updateGame(ROOM, { host_name:name });
+}
+async function saveHostSettings(){
+  if(!ROOM || !ME.isHost || !gameRow) return;
+  const { duration, isSingle, modes } = readSettings();
+  await DB.updateGame(ROOM, { duration_minutes:duration, state:{ ...gameRow.state, enabledModes:modes, singleRound:isSingle } });
+}
+window.addEventListener('DOMContentLoaded', ()=>{
+  document.getElementById('host-details').addEventListener('input', queueHostSave);
+  document.getElementById('duration-pills').addEventListener('click', ()=>setTimeout(saveHostSettings,0));
+  document.getElementById('mode-pills').addEventListener('click', ()=>setTimeout(saveHostSettings,0));
+});
+
+async function hostStart(){
+  const { modes } = readSettings();
   if(modes.length===0){ toast('Pick at least one round type'); return; }
+  if(playersCache.length < 2){ toast('Need at least 2 players'); return; }
+  clearTimeout(hostSaveTimer);
+  await saveHostDetails();
+  await saveHostSettings();
+  gameRow = await DB.getGame(ROOM);
+  playersCache = await DB.listPlayers(ROOM);
+  await fetchMissingPhotos();
+  await beginRounds();
+}
 
-  const code = code4();
-  ROOM = code;
-  ME.id = uid(); ME.name = name; ME.isHost = true;
-  const answers = collectProfileAnswers('host-profile-qs');
-
-  await DB.createGame({
-    code, host_id: ME.id, host_name: name,
-    duration_minutes: duration, status: 'lobby',
-    state: { enabledModes: modes, singleRound: isSingle, session: null }
-  });
-  await DB.addPlayer({ id: ME.id, game_code: code, name, age, score:0, is_host:true, avatar: ME.avatar||null, object_photo: ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
-
-  renderLobby(duration, isSingle);
-  startSync();
-  go('lobby');
+function leaveRoom(){
+  clearSession();
+  location.href = location.pathname;
 }
 
 /* ============================================================
-   GUEST: JOIN GAME
+   GUEST: JOIN GAME — joining with a name that's already in the room
+   reclaims that player (score and all), so a lost tab or a new phone
+   can get back in
    ============================================================ */
 async function joinGame(){
   const code = document.getElementById('join-code').value.trim().toUpperCase();
   const name = document.getElementById('join-name').value.trim();
   const age = parseInt(document.getElementById('join-age').value,10) || null;
-  const phone = document.getElementById('join-phone').value.trim();
   if(code.length!==4){ toast('Enter the 4-letter room code'); return; }
   if(!name){ toast('Enter your name'); return; }
 
   const g = await DB.getGame(code);
   if(!g){ toast('Room not found'); return; }
+  if(g.status==='ended'){ toast('That game has already ended'); return; }
+
+  const answers = collectProfileAnswers('join-profile-qs');
+  const anyAnswered = Object.values(answers).some(v=>v!=='(skipped)');
+  const existing = (await DB.listPlayers(code)).find(p=>(p.name||'').trim().toLowerCase()===name.toLowerCase());
 
   ROOM = code;
-  ME.id = uid(); ME.name = name; ME.isHost = false;
-  const answers = collectProfileAnswers('join-profile-qs');
-  await DB.addPlayer({ id: ME.id, game_code: code, name, age, phone, score:0, is_host:false, avatar: ME.avatar||null, object_photo: ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
-
-  gameRow = g;
-  renderLobby(g.duration_minutes, !!g.state.singleRound);
-  startSync();
-  go('lobby');
+  if(existing){
+    ME.id = existing.id; ME.name = existing.name; ME.isHost = !!existing.is_host;
+    const patch = {};
+    if(age) patch.age = age;
+    if(anyAnswered) patch.profile_answers = answers;
+    if(ME.avatar) patch.avatar = ME.avatar;
+    if(ME.objectPhoto) patch.object_photo = ME.objectPhoto;
+    if(Object.keys(patch).length) await DB.updatePlayer(ME.id, patch);
+    toast(`Welcome back, ${existing.name}!`);
+  } else {
+    ME.id = uid(); ME.name = name; ME.isHost = false;
+    await DB.addPlayer({ id:ME.id, game_code:code, name, age, score:0, is_host:false, avatar:ME.avatar||null, object_photo:ME.objectPhoto||null, profile_answers:answers, profile_submitted:true });
+  }
+  if(ME.avatar || ME.objectPhoto) PHOTOS[ME.id] = { avatar:ME.avatar||null, object_photo:ME.objectPhoto||null, checkedAt:Date.now() };
+  saveSession();
+  await enterRoom(g);
 }
 
-/* auto-fill code from ?join=CODE in URL (QR scan) */
-(function autofillFromUrl(){
-  const params = new URLSearchParams(location.search);
-  const j = params.get('join');
-  if(j){ 
-    window.addEventListener('DOMContentLoaded', ()=>{
-      document.getElementById('join-code').value = j.toUpperCase();
-      go('join');
+/* shared by join + rejoin: put this phone into the room at whatever
+   stage the game is in */
+async function enterRoom(g){
+  if(g.status==='playing' && g.state && g.state.round){
+    // if we'd already answered this round before dropping out, keep it locked
+    const r = g.state.round;
+    const ansId = r.type==='rps' ? (r.id+':w'+r.wave+':'+r.phase) : r.id;
+    const mine = (await DB.listAnswers(ROOM, ansId)).some(a=>a.player_id===ME.id);
+    renderRound._lastRoundKey = r.id + (r.wave||'') + (r.phase||'');
+    localAnswered = mine;
+  }
+  if(g.status==='lobby'){
+    if(ME.isHost){ await restoreHostScreen(); }
+    else { renderLobby(g.duration_minutes, !!(g.state&&g.state.singleRound)); go('lobby'); }
+  }
+  gameRow = null;      // force the first poll to treat the game as "changed"
+  startSync();
+}
+
+async function restoreHostScreen(){
+  const me = (await DB.listPlayers(ROOM)).find(p=>p.id===ME.id);
+  if(me){
+    if(me.name && me.name!=='Host') document.getElementById('host-name').value = me.name;
+    if(me.age) document.getElementById('host-age').value = me.age;
+    const ans = me.profile_answers||{};
+    document.querySelectorAll('#host-profile-qs input').forEach(i=>{
+      const v = ans[i.dataset.key]; if(v && v!=='(skipped)') i.value = v;
     });
   }
-})();
+  renderTicket('host-code','host-qr');
+  go('host-setup');
+  setMasked(document.getElementById('mask-toggle').checked);
+}
+
+async function rejoinSaved(){
+  const sess = loadSession(); if(!sess) return;
+  const g = await DB.getGame(sess.room);
+  if(!g || g.status==='ended'){ clearSession(); document.getElementById('rejoin-btn').classList.add('hidden'); toast('That game has ended'); return; }
+  ROOM = sess.room; ME.id = sess.id; ME.name = sess.name; ME.isHost = !!sess.isHost;
+  await enterRoom(g);
+}
+
+/* on load: offer a one-tap rejoin; if they scanned the same room's QR
+   again, just put them straight back in */
+window.addEventListener('DOMContentLoaded', async ()=>{
+  const params = new URLSearchParams(location.search);
+  const j = (params.get('join')||'').toUpperCase();
+  const sess = loadSession();
+  if(sess){
+    try{
+      const g = await DB.getGame(sess.room);
+      const stillIn = g && g.status!=='ended' && (await DB.listPlayers(sess.room)).some(p=>p.id===sess.id);
+      if(stillIn){
+        if(j && j===sess.room){ await rejoinSaved(); return; }
+        const btn = document.getElementById('rejoin-btn');
+        btn.textContent = `↩️ Rejoin room ${sess.room} as ${sess.name}`;
+        btn.classList.remove('hidden');
+      } else clearSession();
+    }catch(e){}
+  }
+  if(j){ document.getElementById('join-code').value = j; go('join'); }
+});
 
 /* ============================================================
    LOBBY
    ============================================================ */
+function renderTicket(codeId, qrId){
+  document.getElementById(codeId).textContent = ROOM;
+  const joinUrl = location.origin + location.pathname + '?join=' + ROOM;
+  document.getElementById(qrId).src = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(joinUrl);
+}
 function renderLobby(duration, isSingle){
-  document.getElementById('lobby-code').textContent = ROOM;
+  renderTicket('lobby-code','lobby-qr');
   document.getElementById('lobby-duration').textContent = isSingle
     ? 'Debug mode — each enabled round plays once'
     : duration + ' minutes on the clock';
-  const joinUrl = location.origin + location.pathname + '?join=' + ROOM;
-  document.getElementById('lobby-qr').src = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(joinUrl);
   document.getElementById('host-controls').classList.toggle('hidden', !ME.isHost);
   document.getElementById('guest-waiting').classList.toggle('hidden', ME.isHost);
 }
@@ -623,10 +893,21 @@ async function shareInvite(){
 function onPlayersChange(){
   document.getElementById('roster-count').textContent = '('+playersCache.length+')';
   const roster = document.getElementById('roster');
-  roster.innerHTML = playersCache.map(p=>{
-    const av = p.avatar ? `<img src="${p.avatar}">` : '';
-    return `<div class="chip">${av}<span class="dot"></span>${p.name}${p.is_host?' 👑':''}</div>`;
+  const rosterHtml = playersCache.map(p=>{
+    const src = safeSrc(photoOf(p.id,'avatar'));
+    const av = src ? `<img src="${src}">` : '';
+    return `<div class="chip">${av}<span class="dot"></span>${esc(p.name)}${p.is_host?' 👑':''}</div>`;
   }).join('');
+  roster.innerHTML = rosterHtml;
+  const hostRoster = document.getElementById('host-roster');
+  if(hostRoster) hostRoster.innerHTML = rosterHtml;
+  const hostCount = document.getElementById('host-roster-count');
+  if(hostCount) hostCount.textContent = '('+playersCache.length+')';
+  const hostStartBtn = document.getElementById('host-start-btn');
+  if(hostStartBtn){
+    hostStartBtn.disabled = playersCache.length < 2;
+    hostStartBtn.textContent = playersCache.length < 2 ? 'Start — need 2+ players' : `Start game (${playersCache.length} players)`;
+  }
   const startBtn = document.getElementById('start-btn');
   if(startBtn){
     startBtn.disabled = playersCache.length < 2;
@@ -637,7 +918,9 @@ function onPlayersChange(){
 
 function onGameChange(){
   if(!gameRow) return;
-  if(gameRow.status==='lobby'){ /* stay */ }
+  if(gameRow.status==='lobby'){
+    if(!ME.isHost) renderLobby(gameRow.duration_minutes, !!gameRow.state.singleRound); // host may have changed the length
+  }
   else if(gameRow.status==='playing'){ enterPlayScreen(); }
   else if(gameRow.status==='ended'){ enterResultsScreen(); }
 }
@@ -720,10 +1003,11 @@ function pickTrivia(){
 }
 
 function pickGuessWho(){
-  const withAnswers = playersCache.filter(p=>p.profile_answers && Object.keys(p.profile_answers).length);
+  const withAnswers = playersCache.filter(p=>p.profile_answers && Object.values(p.profile_answers).some(v=>v && v!=='(skipped)'));
   if(withAnswers.length < 2) return pickTrivia();
   const person = withAnswers[Math.floor(Math.random()*withAnswers.length)];
-  const keys = Object.keys(person.profile_answers);
+  const keys = Object.keys(person.profile_answers).filter(k=>person.profile_answers[k] && person.profile_answers[k]!=='(skipped)');
+  if(!keys.length) return pickTrivia();
   const key = keys[Math.floor(Math.random()*keys.length)];
   const qText = (PROFILE_QUESTIONS.find(p=>p.k===key)||{q:'Their answer was:'}).q;
   const answerVal = person.profile_answers[key];
@@ -735,34 +1019,35 @@ function pickGuessWho(){
 }
 
 function pickPhoto(){
-  const withPhotos = playersCache.filter(p=>p.avatar);
+  const withPhotos = playersCache.filter(p=>photoOf(p.id,'avatar'));
   if(withPhotos.length < 2) return pickTrivia();
   const person = withPhotos[Math.floor(Math.random()*withPhotos.length)];
   const distractors = playersCache.filter(p=>p.id!==person.id).sort(()=>Math.random()-0.5).slice(0,3);
   const names = [person.name, ...distractors.map(d=>d.name)];
   while(names.length<4) names.push('—');
   const order = names.map((n,i)=>({n,i})).sort(()=>Math.random()-0.5);
-  return { type:'photo', photo:person.avatar, prompt:'Zoomed in… who is it?', options:order.map(x=>x.n), correctIndex:order.findIndex(x=>x.i===0) };
+  return { type:'photo', photoOf:person.id, photoKind:'avatar', prompt:'Zoomed in… who is it?', options:order.map(x=>x.n), correctIndex:order.findIndex(x=>x.i===0) };
 }
 
 function pickObjectGuess(){
-  const withPhotos = playersCache.filter(p=>p.object_photo);
+  const withPhotos = playersCache.filter(p=>photoOf(p.id,'object_photo'));
   if(withPhotos.length < 2) return pickTrivia();
   const person = withPhotos[Math.floor(Math.random()*withPhotos.length)];
   const distractors = playersCache.filter(p=>p.id!==person.id).sort(()=>Math.random()-0.5).slice(0,3);
   const names = [person.name, ...distractors.map(d=>d.name)];
   while(names.length<4) names.push('—');
   const order = names.map((n,i)=>({n,i})).sort(()=>Math.random()-0.5);
-  return { type:'object', subtype:'guess', photo:person.object_photo, prompt:'Whose object is this?', options:order.map(x=>x.n), correctIndex:order.findIndex(x=>x.i===0) };
+  return { type:'object', subtype:'guess', photoOf:person.id, photoKind:'object_photo', prompt:'Whose object is this?', options:order.map(x=>x.n), correctIndex:order.findIndex(x=>x.i===0) };
 }
 
 function pickObjectVote(){
-  const withPhotos = playersCache.filter(p=>p.object_photo);
+  const withPhotos = playersCache.filter(p=>photoOf(p.id,'object_photo'));
   if(withPhotos.length < 2) return pickTrivia();
-  const entries = withPhotos.map(p=>({playerId:p.id, photo:p.object_photo})).sort(()=>Math.random()-0.5);
+  const entries = withPhotos.map(p=>({playerId:p.id})).sort(()=>Math.random()-0.5);
   return { type:'object', subtype:'vote', entries };
 }
 
+const ZOOM = 3.4; // must match .zoom-frame img width (340%)
 function buildRound(mode, roundId){
   if(mode==='rps'){
     const alive = playersCache.map(p=>p.id);
@@ -770,7 +1055,12 @@ function buildRound(mode, roundId){
     return { type:'rps', id:roundId, phase:'winners', wave:1, alive, wins:{}, losersPool:[], pairings, byeId, winnersChampion:null, losersChampion:null, startedAt: Date.now() };
   }
   if(mode==='guesswho') return { ...pickGuessWho(), id:roundId, startedAt: Date.now() };
-  if(mode==='photo') return { ...pickPhoto(), id:roundId, zoomX: 28+Math.random()*44, zoomY: 12+Math.random()*30, startedAt: Date.now() };
+  if(mode==='photo'){
+    // selfies are cropped with the face slightly high, so eyes/nose sit
+    // around x 40–60%, y 32–55% of the square photo
+    const cx = 0.40 + Math.random()*0.20, cy = 0.32 + Math.random()*0.23;
+    return { ...pickPhoto(), id:roundId, zoomLeft: 50 - cx*ZOOM*100, zoomTop: 50 - cy*ZOOM*100, startedAt: Date.now() };
+  }
   if(mode==='object'){
     const sub = Math.random()<0.5 ? pickObjectGuess() : pickObjectVote();
     return { ...sub, id:roundId, startedAt: Date.now() };
@@ -796,7 +1086,6 @@ async function beginRounds(){
 
 function enterPlayScreen(){
   go('play');
-  localAnswered = false;
   tickSessionClock();
   renderRound();
 }
@@ -862,13 +1151,15 @@ function renderRound(){
 
   let html = '';
   if(r.type==='photo'){
-    html += `<div class="zoom-frame"><img src="${r.photo}" style="left:-${r.zoomX}%;top:-${r.zoomY}%"></div>`;
+    const src = safeSrc(photoOf(r.photoOf,'avatar'));
+    html += `<div class="zoom-frame">${src?`<img src="${src}" style="left:${Number(r.zoomLeft)||0}%;top:${Number(r.zoomTop)||0}%">`:'<p class="small center" style="padding-top:45%">Loading photo…</p>'}</div>`;
   }
   if(r.type==='object' && r.subtype==='guess'){
-    html += `<div class="object-frame"><img src="${r.photo}"></div>`;
+    const src = safeSrc(photoOf(r.photoOf,'object_photo'));
+    html += `<div class="object-frame">${src?`<img src="${src}">`:'<p class="small center" style="padding-top:45%">Loading photo…</p>'}</div>`;
   }
-  html += `<div class="prompt-text">${r.prompt}</div>`;
-  html += r.options.map((o,i)=>`<button class="option-btn" data-i="${i}" onclick="chooseOption(${i})" style="margin-top:8px">${o}</button>`).join('');
+  html += `<div class="prompt-text">${esc(r.prompt)}</div>`;
+  html += r.options.map((o,i)=>`<button class="option-btn" data-i="${i}" onclick="chooseOption(${i})" style="margin-top:8px">${esc(o)}</button>`).join('');
   body.innerHTML = html;
 
   refreshAnswerLock();
@@ -902,9 +1193,10 @@ function refreshAnswerLock(){
 /* ---- Object Photos · Vote (grid of everyone's object photo, tap to vote) ---- */
 function renderObjectVote(r, body, status, hostCtl){
   let html = `<div class="prompt-text">Vote for the best object photo!</div>`;
-  html += `<div class="vote-grid">` + r.entries.map(e=>
-    `<div class="vote-item" data-pid="${e.playerId}" onclick="chooseVote('${e.playerId}')"><img src="${e.photo}"></div>`
-  ).join('') + `</div>`;
+  html += `<div class="vote-grid">` + r.entries.map((e,i)=>{
+    const src = safeSrc(photoOf(e.playerId,'object_photo'));
+    return `<div class="vote-item" data-i="${i}" onclick="chooseVote(${i})">${src?`<img src="${src}">`:''}</div>`;
+  }).join('') + `</div>`;
   body.innerHTML = html;
   if(localAnswered){
     document.querySelectorAll('.vote-item').forEach(el=>{ el.style.pointerEvents='none'; });
@@ -913,12 +1205,15 @@ function renderObjectVote(r, body, status, hostCtl){
   showForceResolveButton(hostCtl);
 }
 
-async function chooseVote(playerId){
+async function chooseVote(i){
   if(localAnswered) return;
+  const entry = (gameRow.state.round.entries||[])[i];
+  if(!entry) return;
+  const playerId = entry.playerId;
   localAnswered = true;
   document.querySelectorAll('.vote-item').forEach(el=>{
     el.style.pointerEvents='none';
-    if(el.dataset.pid===playerId) el.classList.add('chosen');
+    if(parseInt(el.dataset.i)===i) el.classList.add('chosen');
   });
   await DB.addAnswer({ game_code:ROOM, round_id:gameRow.state.round.id, player_id:ME.id, payload:{vote:playerId} });
   document.getElementById('round-status').textContent = 'Vote locked in! Waiting on others…';
@@ -982,11 +1277,10 @@ function renderStandingsView(r){
   tag.textContent = 'Standings';
   tag.className = 'mode-tag';
   const sorted = [...playersCache].sort((a,b)=>(b.score||0)-(a.score||0));
-  let html = `<div class="prompt-text center">${r.standingsMessage||'Standings'}</div>`;
+  let html = `<div class="prompt-text center">${esc(r.standingsMessage||'Standings')}</div>`;
   html += `<div class="scoreboard" style="margin-top:10px">` + sorted.map((p,i)=>{
-    const av = p.avatar ? `<img class="avatar" src="${p.avatar}">` : `<div class="avatar">${(p.name[0]||'?').toUpperCase()}</div>`;
     const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
-    return `<div class="score-row ${p.id===ME.id?'me':''}"><span class="rank">${i+1}</span>${av}<span class="nm">${p.name} ${medal}</span><span class="pts">${p.score||0}</span></div>`;
+    return `<div class="score-row ${p.id===ME.id?'me':''}"><span class="rank">${i+1}</span>${avatarHtml(p,'avatar')}<span class="nm">${esc(p.name)} ${medal}</span><span class="pts">${Number(p.score)||0}</span></div>`;
   }).join('') + `</div>`;
   body.innerHTML = html;
   status.textContent = 'Next round starting soon…';
@@ -1009,7 +1303,17 @@ let resolvingInProgress = false;
 async function pollRoundProgress(){
   if(!ME.isHost || resolvingInProgress) return;
   const r = gameRow.state.round;
-  if(!r || r.standingsUntil) return; // showing standings — nothing to resolve
+  if(!r) return;
+  if(r.standingsUntil){
+    // showing standings — normally the host's own timer moves on. If the
+    // host dropped out mid-standings and came back, that timer is gone, so
+    // nudge the game forward once the standings are well past due.
+    if(Date.now() > r.standingsUntil + 2500){
+      resolvingInProgress = true;
+      try{ await nextRound(); } finally { resolvingInProgress = false; }
+    }
+    return;
+  }
   const key = currentRoundKey();
   if(key === lastResolvedKey) return;
   const expected = r.type==='rps' ? (r.pairings?r.pairings.length*2:r.alive.length) : playersCache.length;
@@ -1061,7 +1365,7 @@ function renderRPS(r, body, status, hostCtl){
   const phaseLabel = r.phase==='winners' ? 'Winners Bracket' : 'Losers Bracket';
   const aliveNames = r.alive.map(id=>(playersCache.find(p=>p.id===id)||{}).name).filter(Boolean);
   let html = `<div class="prompt-text">${phaseLabel} · Wave ${r.wave}</div>`;
-  html += `<p class="small">${aliveNames.join(' · ')}</p>`;
+  html += `<p class="small">${aliveNames.map(esc).join(' · ')}</p>`;
   const amAlive = r.alive.includes(ME.id);
   if(amAlive && ME.id===r.byeId){
     html += `<p class="prompt-text center">🎉 You drew a bye — free pass to the next wave!</p>`;
@@ -1069,7 +1373,7 @@ function renderRPS(r, body, status, hostCtl){
     const pair = (r.pairings||[]).find(p=>p.includes(ME.id));
     const oppId = pair ? pair.find(id=>id!==ME.id) : null;
     const oppName = oppId ? (playersCache.find(p=>p.id===oppId)||{}).name || '…' : 'someone';
-    html += `<div class="prompt-text center">You vs ${oppName}</div>`;
+    html += `<div class="prompt-text center">You vs ${esc(oppName)}</div>`;
     html += `<div class="rps-choices">
       <button onclick="rpsThrow('rock')" id="rps-rock">🪨</button>
       <button onclick="rpsThrow('paper')" id="rps-paper">📄</button>
@@ -1213,9 +1517,8 @@ function enterResultsScreen(){
   const sorted = [...playersCache].sort((a,b)=>(b.score||0)-(a.score||0));
   const board = document.getElementById('final-scoreboard');
   board.innerHTML = sorted.map((p,i)=>{
-    const av = p.avatar ? `<img class="avatar" src="${p.avatar}">` : `<div class="avatar">${p.name[0].toUpperCase()}</div>`;
     const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
-    return `<div class="score-row ${p.id===ME.id?'me':''}"><span class="rank">${i+1}</span>${av}<span class="nm">${p.name} ${medal}</span><span class="pts">${p.score||0}</span></div>`;
+    return `<div class="score-row ${p.id===ME.id?'me':''}"><span class="rank">${i+1}</span>${avatarHtml(p,'avatar')}<span class="nm">${esc(p.name)} ${medal}</span><span class="pts">${Number(p.score)||0}</span></div>`;
   }).join('');
 }
 </script>
