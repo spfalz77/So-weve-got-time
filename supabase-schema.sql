@@ -5,8 +5,10 @@
 -- "anon" key and anyone holding it can talk to these tables. We limit the
 -- damage that can do:
 --   * no phone numbers or other contact info are stored
---   * photos/answers can't be bulk-browsed for long: games (and their
---     players, photos and answers) are deleted 24h after creation
+--   * photos are wiped the moment a game ends (by the host's phone, and
+--     by the cleanup job as a backstop for any game ended or 2h old)
+--   * whole games (players, scores, answers) are hidden after 3h and
+--     deleted by the cleanup job, which runs every 10 minutes
 --   * nobody can DELETE through the API
 -- Stronger protection (only players in a room can read that room) needs
 -- Supabase Anonymous Sign-Ins + per-room RLS; see README "Next steps".
@@ -74,24 +76,29 @@ drop policy if exists "answers read"   on swgt_answers;
 drop policy if exists "answers write"  on swgt_answers;
 
 -- only games from the last 24h are visible or writable at all
-create policy "games read"     on swgt_games   for select using (created_at > now() - interval '24 hours');
+create policy "games read"     on swgt_games   for select using (created_at > now() - interval '3 hours');
 create policy "games write"    on swgt_games   for insert with check (true);
-create policy "games update"   on swgt_games   for update using (created_at > now() - interval '24 hours');
-create policy "players read"   on swgt_players for select using (joined_at > now() - interval '24 hours');
+create policy "games update"   on swgt_games   for update using (created_at > now() - interval '3 hours');
+create policy "players read"   on swgt_players for select using (joined_at > now() - interval '3 hours');
 create policy "players write"  on swgt_players for insert with check (true);
-create policy "players update" on swgt_players for update using (joined_at > now() - interval '24 hours');
-create policy "answers read"   on swgt_answers for select using (created_at > now() - interval '24 hours');
+create policy "players update" on swgt_players for update using (joined_at > now() - interval '3 hours');
+create policy "answers read"   on swgt_answers for select using (created_at > now() - interval '3 hours');
 create policy "answers write"  on swgt_answers for insert with check (true);
 -- (no delete policies: nothing can be deleted through the API)
 
--- ---------- cleanup: delete games older than 24h ----------
+-- ---------- cleanup: wipe photos from finished games, delete old games ----------
 create or replace function swgt_cleanup() returns void
 language sql security definer set search_path = public as $$
-  delete from swgt_games where created_at < now() - interval '24 hours';
+  update swgt_players p set avatar = null, object_photo = null
+    from swgt_games g
+   where p.game_code = g.code
+     and (g.status = 'ended' or g.created_at < now() - interval '2 hours')
+     and (p.avatar is not null or p.object_photo is not null);
+  delete from swgt_games where created_at < now() - interval '3 hours';
 $$;
 revoke all on function swgt_cleanup() from public, anon, authenticated;
 
--- hourly via pg_cron (enable the extension under Database → Extensions)
+-- every 10 minutes via pg_cron (enable the extension under Database → Extensions)
 create extension if not exists pg_cron;
 select cron.unschedule('swgt-cleanup') where exists (select 1 from cron.job where jobname='swgt-cleanup');
-select cron.schedule('swgt-cleanup', '17 * * * *', $$select swgt_cleanup()$$);
+select cron.schedule('swgt-cleanup', '*/10 * * * *', $$select swgt_cleanup()$$);

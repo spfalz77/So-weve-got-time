@@ -534,6 +534,10 @@ const DB = {
     return data||[];
   },
   /* photos are fetched once per player, then cached */
+  async clearPhotos(code){
+    if(DEMO){ const db=demoDB(); db.players.forEach(p=>{ if(p.game_code===code){ p.avatar=null; p.object_photo=null; } }); demoSave(db); return; }
+    await sb.from('swgt_players').update({ avatar:null, object_photo:null }).eq('game_code', code);
+  },
   async getPhotos(ids, kind){
     if(DEMO){ const db=demoDB(); return db.players.filter(p=>ids.includes(p.id)).map(p=>({id:p.id, [kind]:p[kind]||null})); }
     // only rows that actually have this photo come back, so re-checks are tiny
@@ -657,7 +661,7 @@ function saveSession(){
 function loadSession(){
   try{
     const s = JSON.parse(localStorage.getItem(SESSION_KEY)||'null');
-    if(s && s.room && s.id && Date.now()-s.at < 12*3600*1000) return s;
+    if(s && s.room && s.id && Date.now()-s.at < 3*3600*1000) return s;
   }catch(e){}
   return null;
 }
@@ -1125,6 +1129,9 @@ function updateSingleRoundProgress(){
 
 async function finishGame(){
   await DB.updateGame(ROOM, { status:'ended' });
+  // photos are only needed while playing — every phone already has them
+  // cached for the results screen, so wipe them from the server now
+  await DB.clearPhotos(ROOM);
 }
 
 function renderScoreLive(){
