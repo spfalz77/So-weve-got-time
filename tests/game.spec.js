@@ -27,6 +27,8 @@ const LIVE_KEY = process.env.SUPABASE_ANON_KEY || '';
 const LIVE = !!(LIVE_URL && LIVE_KEY);
 if (/xesylbmpeewicgxxiruo/.test(LIVE_URL)) throw new Error('Tests must not run against the production project');
 
+const SB_PROXY = 'http://localhost:8765/__sb';
+
 test.setTimeout(240_000);
 
 async function routeApp(context) {
@@ -38,14 +40,25 @@ async function routeApp(context) {
     if (url.includes('cdn.jsdelivr.net/npm/@supabase/supabase-js')) {
       return route.fulfill({ contentType: 'application/javascript', body: fs.readFileSync(SUPABASE_JS, 'utf8') });
     }
-    if (LIVE && url.startsWith(LIVE_URL)) return route.continue();
+    // the app talks to Supabase via a same-origin path, which we forward to
+    // the local stack — no CORS/private-network rules differ between engines
+    if (LIVE && url.startsWith(SB_PROXY)) {
+      const target = LIVE_URL + url.slice(SB_PROXY.length);
+      try {
+        const res = await route.fetch({ url: target });
+        return route.fulfill({ response: res });
+      } catch (e) {
+        console.log(`[proxy] ${route.request().method()} ${target} failed: ${e.message}`);
+        return route.abort();
+      }
+    }
     if (!url.startsWith('http://localhost')) return route.abort();
     if (url.includes('index.html') || url.endsWith('/') || url.includes('/?')) {
       const res = await route.fetch();
       let body = await res.text();
       if (LIVE) {
         body = body
-          .replace(/const SUPABASE_URL = "[^"]*";/, `const SUPABASE_URL = "${LIVE_URL}";`)
+          .replace(/const SUPABASE_URL = "[^"]*";/, `const SUPABASE_URL = "${SB_PROXY}";`)
           .replace(/const SUPABASE_ANON_KEY = "[^"]*";/, `const SUPABASE_ANON_KEY = "${LIVE_KEY}";`);
       } else {
         body = body.replace(/const SUPABASE_URL = "[^"]*";/, 'const SUPABASE_URL = "YOUR_TEST";');
@@ -93,6 +106,9 @@ function makePhoneFactory(world, errors) {
       }, name);
     }
     page.on('pageerror', (e) => errors.push(`${name}: ${e.message}`));
+    // diagnostics in the CI log if a backend request fails
+    page.on('requestfailed', (r) => { if (r.url().includes('__sb') || r.url().includes('supabase')) console.log(`[${name}] request failed: ${r.method()} ${r.url()} — ${r.failure()?.errorText}`); });
+    page.on('console', (m) => { if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) console.log(`[${name}] console: ${m.text()}`); });
     return page;
   };
 }
