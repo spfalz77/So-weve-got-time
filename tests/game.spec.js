@@ -77,14 +77,16 @@ async function joinAs(page, code, { name, age, answers, photos = true }) {
 async function autoAnswer(page) {
   return page.evaluate(() => {
     if (!document.querySelector('#screen-play.active')) return null;
+    const ready = document.querySelector('#rps-ready');
+    if (ready) { ready.click(); return 'ready'; }
+    const throwBtn = ['#rps-rock', '#rps-paper', '#rps-scissors'][Math.floor(Math.random() * 3)];
+    const tb = document.querySelector(throwBtn + ':not([disabled])');
+    if (tb) { tb.click(); return 'rps'; }
     if (typeof localAnswered !== 'undefined' && localAnswered) return null;
     const opt = document.querySelector('.option-btn:not([disabled])');
     if (opt) { opt.click(); return 'option'; }
     const vote = [...document.querySelectorAll('.vote-item')].find((v) => v.style.pointerEvents !== 'none');
     if (vote) { vote.click(); return 'vote'; }
-    const rps = ['#rps-rock', '#rps-paper', '#rps-scissors'][Math.floor(Math.random() * 3)];
-    const btn = document.querySelector(rps + ':not([disabled])');
-    if (btn) { btn.click(); return 'rps'; }
     return null;
   }).catch(() => null);
 }
@@ -241,6 +243,123 @@ test('host can close the tab in the lobby and come back to the same room', async
   await expect(host.locator('#host-name')).toHaveValue('Sam');
   await expect(host.locator('#host-profile-qs input').first()).toHaveValue('Hawaii');
 
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test('rock-paper-scissors: find your opponent, ready up, best of three', async ({ browser }) => {
+  const errors = [];
+  const context = await setupContext(browser);
+  const phone = makePhoneFactory(context, errors);
+
+  const host = await phone('host');
+  await host.goto('/');
+  await host.click('text=Start a game');
+  await expect(host.locator('#host-code')).toHaveText(/^[A-Z]{4}$/);
+  const code = await host.innerText('#host-code');
+  await host.fill('#host-name', 'Sam');
+  // RPS only, single round
+  for (const m of ['trivia', 'guesswho', 'photo', 'object']) await host.click(`#mode-pills .pill[data-mode="${m}"]`);
+  await host.click('#duration-pills .pill[data-min="single"]');
+
+  const guest = await phone('guest');
+  await joinAs(guest, code, { name: 'Alex', age: 30, answers: [], photos: false });
+  await expect(host.locator('#host-start-btn')).toHaveText(/Start game \(2 players\)/, { timeout: 10_000 });
+  await host.waitForTimeout(800); // host name autosave
+  await host.click('#host-start-btn');
+
+  // 1. ready screen: tells you who to find, shows the bracket, no throw buttons yet
+  await expect(host.locator('#round-body')).toContainText('Next up: you vs Alex', { timeout: 10_000 });
+  await expect(guest.locator('#round-body')).toContainText('Next up: you vs Sam', { timeout: 10_000 });
+  await expect(guest.locator('.bracket')).toContainText('Winners bracket · wave 1');
+  await expect(guest.locator('#rps-rock')).toHaveCount(0);
+
+  // match only starts when BOTH are ready
+  await host.click('#rps-ready');
+  await expect(host.locator('#round-body')).toContainText('waiting for Alex');
+  await expect(guest.locator('#round-body')).toContainText('Sam is ready', { timeout: 5_000 });
+  await host.waitForTimeout(2500);
+  await expect(host.locator('#rps-rock')).toHaveCount(0);
+  await guest.click('#rps-ready');
+  await expect(host.locator('#rps-rock')).toBeVisible({ timeout: 6_000 });
+  await expect(guest.locator('#rps-rock')).toBeVisible({ timeout: 6_000 });
+
+  const score = async (page) => (await page.locator('.match-score').innerText()).replace(/\s+/g, ' ');
+
+  // 2. a tie doesn't count — throw again
+  await host.click('#rps-rock'); await guest.click('#rps-rock');
+  await expect(guest.locator('#round-body')).toContainText('tie — throw again', { timeout: 6_000 });
+  expect(await score(guest)).toMatch(/You 0 – 0 Sam/);
+
+  // Sam takes throw 2
+  await expect(host.locator('#rps-rock')).toBeVisible({ timeout: 6_000 });
+  await host.click('#rps-rock'); await guest.click('#rps-scissors');
+  await expect(guest.locator('#round-body')).toContainText('they win the throw', { timeout: 6_000 });
+  await expect(host.locator('#round-body')).toContainText('you win the throw', { timeout: 6_000 });
+  expect(await score(host)).toMatch(/You 1 – 0 Alex/);
+
+  // one win isn't enough: still playing
+  await expect(host.locator('#rps-rock')).toBeVisible();
+
+  // Alex takes throw 3 → 1–1
+  await host.click('#rps-scissors'); await guest.click('#rps-rock');
+  await expect(guest.locator('#round-body')).toContainText('you win the throw', { timeout: 6_000 });
+  expect(await score(guest)).toMatch(/You 1 – 1 Sam/);
+
+  // Sam takes throw 4 → wins 2–1
+  await expect(host.locator('#rps-paper')).toBeVisible({ timeout: 6_000 });
+  await host.click('#rps-paper'); await guest.click('#rps-rock');
+
+  // standings show the winner and the bracket with the final score
+  await expect(guest.locator('#round-body')).toContainText('Sam wins the RPS tournament', { timeout: 8_000 });
+  await expect(guest.locator('.bracket')).toContainText('2–1');
+
+  await expect(host.locator('#screen-results')).toHaveClass(/active/, { timeout: 10_000 });
+  const scores = await host.evaluate(() => Object.fromEntries(playersCache.map((p) => [p.name, p.score])));
+  expect(scores.Sam).toBe(30);
+  expect(scores.Alex).toBe(15);
+
+  expect(errors).toEqual([]);
+  await context.close();
+});
+
+test('rock-paper-scissors with an odd number: bye, then losers bracket', async ({ browser }) => {
+  const errors = [];
+  const context = await setupContext(browser);
+  const phone = makePhoneFactory(context, errors);
+
+  const host = await phone('host');
+  await host.goto('/');
+  await host.click('text=Start a game');
+  await expect(host.locator('#host-code')).toHaveText(/^[A-Z]{4}$/);
+  const code = await host.innerText('#host-code');
+  await host.fill('#host-name', 'Sam');
+  for (const m of ['trivia', 'guesswho', 'photo', 'object']) await host.click(`#mode-pills .pill[data-mode="${m}"]`);
+  await host.click('#duration-pills .pill[data-min="single"]');
+  const players = { host };
+  for (const n of ['Alex', 'Riley']) {
+    const p = await phone(n);
+    await joinAs(p, code, { name: n, age: 30, answers: [], photos: false });
+    players[n] = p;
+  }
+  await expect(host.locator('#host-start-btn')).toHaveText(/3 players/, { timeout: 10_000 });
+  await host.click('#host-start-btn');
+
+  // someone gets a bye in wave 1
+  await expect(host.locator('.bracket')).toContainText('bye', { timeout: 10_000 });
+  let sawLosers = false;
+  const deadline = Date.now() + 90_000;
+  while (Date.now() < deadline) {
+    for (const p of Object.values(players)) await autoAnswer(p);
+    const txt = await host.locator('#round-body').innerText().catch(() => '');
+    if (/Losers bracket/i.test(txt)) sawLosers = true;
+    if (await host.locator('#screen-results.active').count()) break;
+    await host.waitForTimeout(300);
+  }
+  await expect(host.locator('#screen-results')).toHaveClass(/active/);
+  expect(sawLosers).toBe(true);
+  const total = await host.evaluate(() => playersCache.reduce((a, p) => a + (p.score || 0), 0));
+  expect(total).toBe(45); // 30 winners champ + 15 losers champ
   expect(errors).toEqual([]);
   await context.close();
 });

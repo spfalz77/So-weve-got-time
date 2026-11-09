@@ -118,6 +118,20 @@ label{font-size:12px;font-weight:800;text-transform:uppercase;letter-spacing:.8p
 .rps-choices button{font-size:36px;width:84px;height:84px;border-radius:50%;background:#fff;color:var(--charcoal);box-shadow:0 5px 0 #D8CFB6;}
 .rps-choices button.chosen{background:var(--ink);color:var(--paper);}
 
+.bracket{margin-top:14px;background:rgba(255,255,255,.05);border-radius:12px;padding:8px 10px;}
+.br-head{font-size:11px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--muted);margin:8px 4px 4px;}
+.br-head:first-child{margin-top:2px;}
+.br-row{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;padding:6px 6px;border-radius:8px;font-weight:700;font-size:14px;}
+.br-row span:last-child{text-align:right;}
+.br-row.mine{background:rgba(242,169,59,.16);}
+.br-row .won{color:var(--mint);}
+.br-row .lost{color:var(--muted);text-decoration:line-through;opacity:.7;}
+.br-score{font-family:'Space Mono',monospace;color:var(--marigold);font-size:13px;}
+.match-score{display:flex;justify-content:center;align-items:baseline;gap:12px;font-size:18px;font-weight:700;}
+.match-score b{font-family:'Space Mono',monospace;font-size:30px;color:var(--marigold);}
+.match-score .dash{color:var(--muted);}
+.throw-line{text-align:center;font-weight:700;margin:4px 0 10px;}
+.ready-note{font-weight:800;color:var(--mint);}
 .zoom-frame{width:100%;aspect-ratio:1/1;border-radius:16px;overflow:hidden;background:#0000;position:relative;border:3px solid var(--marigold);}
 .object-frame{width:100%;aspect-ratio:1/1;border-radius:16px;overflow:hidden;border:3px solid var(--marigold);background:#0002;}
 .object-frame img{width:100%;height:100%;object-fit:cover;display:block;}
@@ -545,8 +559,13 @@ const DB = {
     return data||[];
   },
   async addAnswer(row){
-    if(DEMO){ const db=demoDB(); db.answers.push(row); demoSave(db); return; }
+    if(DEMO){ const db=demoDB(); db.answers.push({ ...row, created_at:new Date().toISOString() }); demoSave(db); return; }
     await sb.from('swgt_answers').insert(row);
+  },
+  async listAnswersPrefix(code, prefix){
+    if(DEMO){ const db=demoDB(); return db.answers.filter(a=>a.game_code===code && String(a.round_id).startsWith(prefix)); }
+    const { data } = await sb.from('swgt_answers').select('round_id,player_id,payload,created_at').eq('game_code', code).like('round_id', prefix+'%');
+    return data||[];
   },
   async listAnswers(code, round_id){
     if(DEMO){ const db=demoDB(); return db.answers.filter(a=>a.game_code===code && a.round_id===round_id); }
@@ -608,6 +627,7 @@ function startSync(){
       const [g, ps] = await Promise.all([DB.getGame(ROOM), DB.listPlayers(ROOM)]);
       playersCache = ps; onPlayersChange();
       fetchMissingPhotos();
+      if(g && gameRow && gameRow.code===g.code && ((g.state&&g.state.rev)||0) < ((gameRow.state&&gameRow.state.rev)||0)) g = null; // stale read
       if(g){ const changed = JSON.stringify(g)!==JSON.stringify(gameRow); gameRow=g; if(changed) onGameChange(); }
       if(gameRow && gameRow.status==='playing') pollRoundProgress();
     }catch(e){ /* flaky network — next tick will retry */ }
@@ -800,7 +820,7 @@ async function enterRoom(g){
   if(g.status==='playing' && g.state && g.state.round){
     // if we'd already answered this round before dropping out, keep it locked
     const r = g.state.round;
-    const ansId = r.type==='rps' ? (r.id+':w'+r.wave+':'+r.phase) : r.id;
+    const ansId = r.id;
     const mine = (await DB.listAnswers(ROOM, ansId)).some(a=>a.player_id===ME.id);
     renderRound._lastRoundKey = r.id + (r.wave||'') + (r.phase||'');
     localAnswered = mine;
@@ -1055,8 +1075,7 @@ const ZOOM = 3.4; // must match .zoom-frame img width (340%)
 function buildRound(mode, roundId){
   if(mode==='rps'){
     const alive = playersCache.map(p=>p.id);
-    const { pairings, byeId } = makePairings(alive, {});
-    return { type:'rps', id:roundId, phase:'winners', wave:1, alive, wins:{}, losersPool:[], pairings, byeId, winnersChampion:null, losersChampion:null, startedAt: Date.now() };
+    return { type:'rps', id:roundId, phase:'winners', wave:1, alive, wins:{}, losersPool:[], history:[], winnersChampion:null, losersChampion:null, ...rpsNewWave(alive, {}), startedAt: Date.now() };
   }
   if(mode==='guesswho') return { ...pickGuessWho(), id:roundId, startedAt: Date.now() };
   if(mode==='photo'){
@@ -1289,6 +1308,7 @@ function renderStandingsView(r){
     const medal = i===0?'🥇':i===1?'🥈':i===2?'🥉':'';
     return `<div class="score-row ${p.id===ME.id?'me':''}"><span class="rank">${i+1}</span>${avatarHtml(p,'avatar')}<span class="nm">${esc(p.name)} ${medal}</span><span class="pts">${Number(p.score)||0}</span></div>`;
   }).join('') + `</div>`;
+  if(r.type==='rps') html += rpsBracketHtml(r);
   body.innerHTML = html;
   status.textContent = 'Next round starting soon…';
 }
@@ -1300,7 +1320,7 @@ function currentRoundKey(){
 
 async function doResolveCurrentRound(){
   const r = gameRow.state.round;
-  if(r.type==='rps') return resolveRPSWave();
+  if(r.type==='rps') return rpsHostTick(true);
   if(r.type==='object' && r.subtype==='vote') return resolveObjectVote();
   return revealAndAdvance();
 }
@@ -1321,10 +1341,15 @@ async function pollRoundProgress(){
     }
     return;
   }
+  if(r.type==='rps'){
+    resolvingInProgress = true;
+    try{ await rpsHostTick(false); } finally { resolvingInProgress = false; }
+    return;
+  }
   const key = currentRoundKey();
   if(key === lastResolvedKey) return;
-  const expected = r.type==='rps' ? (r.pairings?r.pairings.length*2:r.alive.length) : playersCache.length;
-  const roundIdForAnswers = r.type==='rps' ? (r.id+':w'+r.wave+':'+r.phase) : r.id;
+  const expected = playersCache.length;
+  const roundIdForAnswers = r.id;
   const answers = await DB.listAnswers(ROOM, roundIdForAnswers);
   const timedOut = r.startedAt && (Date.now()-r.startedAt > 25000);
   if(expected>0 && (answers.length>=expected || timedOut)){
@@ -1336,7 +1361,7 @@ async function pollRoundProgress(){
 }
 
 async function forceResolveNow(){
-  if(resolvingInProgress) return;
+  if(resolvingInProgress){ toast('One sec…'); return; }
   lastResolvedKey = currentRoundKey();
   resolvingInProgress = true;
   try{ await doResolveCurrentRound(); }
@@ -1362,53 +1387,35 @@ async function nextRound(){
   await DB.updateGame(ROOM, { state:{...gameRow.state, round} });
 }
 
-/* ---- RPS: tournament bracket with a losers bracket ----
-   Byes: if the wave has an odd number of players, the bye goes to
-   whoever has the most wins so far this phase (a reward for winning).
-   On the very first wave everyone's tied at 0, so the bye is random.
-   Pairings are decided the moment a wave starts (not at resolve time),
-   so every client can see who they're matched against before throwing. */
-function renderRPS(r, body, status, hostCtl){
-  const phaseLabel = r.phase==='winners' ? 'Winners Bracket' : 'Losers Bracket';
-  const aliveNames = r.alive.map(id=>(playersCache.find(p=>p.id===id)||{}).name).filter(Boolean);
-  let html = `<div class="prompt-text">${phaseLabel} · Wave ${r.wave}</div>`;
-  html += `<p class="small">${aliveNames.map(esc).join(' · ')}</p>`;
-  const amAlive = r.alive.includes(ME.id);
-  if(amAlive && ME.id===r.byeId){
-    html += `<p class="prompt-text center">🎉 You drew a bye — free pass to the next wave!</p>`;
-  } else if(amAlive){
-    const pair = (r.pairings||[]).find(p=>p.includes(ME.id));
-    const oppId = pair ? pair.find(id=>id!==ME.id) : null;
-    const oppName = oppId ? (playersCache.find(p=>p.id===oppId)||{}).name || '…' : 'someone';
-    html += `<div class="prompt-text center">You vs ${esc(oppName)}</div>`;
-    html += `<div class="rps-choices">
-      <button onclick="rpsThrow('rock')" id="rps-rock">🪨</button>
-      <button onclick="rpsThrow('paper')" id="rps-paper">📄</button>
-      <button onclick="rpsThrow('scissors')" id="rps-scissors">✂️</button>
-    </div>`;
-  } else if(r.phase==='winners' && (r.losersPool||[]).includes(ME.id)){
-    html += `<p class="small center">You dropped to the losers bracket — hang tight, it plays after the winners bracket wraps up.</p>`;
-  } else if(r.phase==='losers' && ME.id===r.winnersChampion){
-    html += `<p class="small center">🏆 You won the winners bracket! Watching the losers bracket duke it out for 2nd.</p>`;
-  } else {
-    html += `<p class="small center">You're out this round — cheer them on!</p>`;
-  }
-  body.innerHTML = html;
-  if(localAnswered){
-    document.querySelectorAll('.rps-choices button').forEach(b=>b.disabled=true);
-  }
-  const needsThrow = amAlive && ME.id!==r.byeId;
-  status.textContent = needsThrow ? (localAnswered?'Locked in — waiting on others…':'Rock, paper, or scissors?') : '';
-  if(r.alive.length>0) showForceResolveButton(hostCtl);
-}
+/* ---- RPS: tournament with a losers bracket ----
+   Flow for each wave:
+     1. Ready screen: shows the bracket so far and who you play next, so
+        you can go find them. Your match starts when you've both hit Ready.
+     2. Match: best of three — first to 2 throw wins. Ties don't count,
+        you just throw again. After every throw both phones show the result.
+     3. When every match in the wave is done, the next wave's ready screen
+        appears (with the updated bracket).
+   Byes: if a wave has an odd number of players, the bye goes to whoever
+   has the most wins so far this phase (random on the first wave).
+   The host's phone is the referee: players only write "ready" and
+   "throw" answers; the host reads them and updates the match state. */
+const RPS_TO_WIN = 2;
+const RPS_READY_TIMEOUT = 90000;  // auto-start a match if nobody hits Ready
+const RPS_THROW_TIMEOUT = 45000;  // a player who doesn't throw forfeits that throw
+const RPS_EMOJI = { rock:'🪨', paper:'📄', scissors:'✂️' };
+const rpsSent = new Set();        // answer keys this phone has already sent
 
-async function rpsThrow(choice){
-  if(localAnswered) return;
-  localAnswered = true;
-  const r = gameRow.state.round;
-  await DB.addAnswer({ game_code:ROOM, round_id:r.id+':w'+r.wave+':'+r.phase, player_id:ME.id, payload:{choice} });
-  document.querySelectorAll('.rps-choices button').forEach(b=>b.disabled=true);
-  document.getElementById('round-status').textContent = 'Locked in — waiting on others…';
+function nameOf(id){ return (playersCache.find(p=>p.id===id)||{}).name || '?'; }
+function rpsPrefix(r){ return `${r.id}:${r.phase}:w${r.wave}:`; }
+function rpsKey(r, i, suffix){ return `${rpsPrefix(r)}m${i}:${suffix}`; }
+
+function rpsNewWave(alive, wins){
+  const { pairings, byeId } = makePairings(alive, wins);
+  return {
+    byeId,
+    waveStartedAt: Date.now(),
+    matches: pairings.map(([a,b])=>({ a, b, ready:{}, started:false, sa:0, sb:0, throwNo:1, last:null, winner:null, throwSince:null }))
+  };
 }
 
 function rpsBeats(a,b){
@@ -1421,8 +1428,6 @@ function pickByeId(alivePool, wins){
   return candidates[Math.floor(Math.random()*candidates.length)];
 }
 
-/* decide matchups for a wave before anyone throws, so clients can
-   display "you vs <name>" right away */
 function makePairings(alivePool, wins){
   let byeId = null, pool = alivePool;
   if(alivePool.length % 2 === 1 && alivePool.length>1){
@@ -1431,69 +1436,238 @@ function makePairings(alivePool, wins){
   }
   const shuffled = [...pool].sort(()=>Math.random()-0.5);
   const pairings = [];
-  for(let i=0;i<shuffled.length;i+=2){
-    pairings.push([shuffled[i], shuffled[i+1]]);
-  }
+  for(let i=0;i+1<shuffled.length;i+=2) pairings.push([shuffled[i], shuffled[i+1]]);
   return { pairings, byeId };
 }
 
-async function resolveRPSWave(){
+/* ---------- player actions ---------- */
+async function rpsReady(){
   const r = gameRow.state.round;
-  const answers = await DB.listAnswers(ROOM, r.id+':w'+r.wave+':'+r.phase);
-  const byPlayer = {}; answers.forEach(a=> byPlayer[a.player_id]=a.payload.choice);
-  const wins = {...(r.wins||{})};
+  const i = r.matches.findIndex(m=>m.a===ME.id||m.b===ME.id);
+  if(i<0) return;
+  const k = rpsKey(r, i, 'ready');
+  if(rpsSent.has(k)) return;
+  rpsSent.add(k); renderRound();
+  await DB.addAnswer({ game_code:ROOM, round_id:k, player_id:ME.id, payload:{ ready:true } });
+}
 
-  const winners = new Set(); const losersThisWave = [];
-  if(r.byeId) winners.add(r.byeId);
-  for(const [p1,p2] of (r.pairings||[])){
-    const c1=byPlayer[p1], c2=byPlayer[p2];
-    let w,l;
-    if(!c1 && !c2){ w=p1; l=p2; }
-    else if(!c1){ w=p2; l=p1; }
-    else if(!c2){ w=p1; l=p2; }
-    else if(c1===c2){ w = Math.random()<0.5?p1:p2; l = (w===p1?p2:p1); } // tie-break by coin flip to keep things moving
-    else { w = rpsBeats(c1,c2)? p1:p2; l = (w===p1?p2:p1); }
-    winners.add(w); losersThisWave.push(l);
-    wins[w] = (wins[w]||0)+1;
-  }
-  const newAlive = [...winners];
+async function rpsThrow(choice){
+  const r = gameRow.state.round;
+  const i = r.matches.findIndex(m=>m.a===ME.id||m.b===ME.id);
+  if(i<0) return;
+  const m = r.matches[i];
+  if(!m.started || m.winner) return;
+  const k = rpsKey(r, i, 't'+m.throwNo);
+  if(rpsSent.has(k)) return;
+  rpsSent.add(k);
+  rpsSent.add(k+'='+choice);
+  renderRound();
+  await DB.addAnswer({ game_code:ROOM, round_id:k, player_id:ME.id, payload:{ choice } });
+}
+
+/* ---------- host: referee ---------- */
+async function saveRound(round){
+  const state = { ...gameRow.state, round, rev:(gameRow.state.rev||0)+1 };
+  gameRow = { ...gameRow, state };
+  await DB.updateGame(ROOM, { state });
+  renderRound();
+}
+
+async function rpsHostTick(force){
+  const r = gameRow.state.round;
+  if(!r || r.type!=='rps' || r.phase==='done') return;
+  const answers = await DB.listAnswersPrefix(ROOM, rpsPrefix(r));
+  answers.sort((a,b)=> new Date(a.created_at) - new Date(b.created_at));
+  const got = {};   // round_id -> { playerId: payload } (first answer wins)
+  answers.forEach(a=>{ const g = got[a.round_id] || (got[a.round_id] = {}); if(!(a.player_id in g)) g[a.player_id] = a.payload||{}; });
+
+  const now = Date.now();
+  let changed = false;
+  const matches = r.matches.map(m=>({ ...m, ready:{ ...m.ready } }));
+  matches.forEach((m,i)=>{
+    if(m.winner) return;
+    if(!m.started){
+      const rd = got[rpsKey(r,i,'ready')] || {};
+      [m.a, m.b].forEach(pid=>{ if(rd[pid] && !m.ready[pid]){ m.ready[pid] = true; changed = true; } });
+      if((m.ready[m.a] && m.ready[m.b]) || force || now - r.waveStartedAt > RPS_READY_TIMEOUT){
+        m.started = true; m.throwSince = now; changed = true;
+      } else return;
+    }
+    while(!m.winner){
+      const t = got[rpsKey(r,i,'t'+m.throwNo)] || {};
+      const ca = t[m.a] && t[m.a].choice, cb = t[m.b] && t[m.b].choice;
+      let winner, forfeit = false;
+      if(ca && cb){
+        winner = ca===cb ? null : (rpsBeats(ca,cb) ? m.a : m.b);
+      } else if(force || now - (m.throwSince||now) > RPS_THROW_TIMEOUT){
+        // whoever didn't throw loses the throw (coin flip if neither did)
+        forfeit = true;
+        winner = ca ? m.a : cb ? m.b : (Math.random()<0.5 ? m.a : m.b);
+      } else break;
+      m.last = { n:m.throwNo, ca:ca||null, cb:cb||null, winner, forfeit };
+      if(winner===m.a) m.sa++; else if(winner===m.b) m.sb++;
+      m.throwNo++; m.throwSince = now; changed = true;
+      if(m.sa>=RPS_TO_WIN) m.winner = m.a;
+      else if(m.sb>=RPS_TO_WIN) m.winner = m.b;
+      if(forfeit && !force) break;
+    }
+  });
+
+  const round = { ...r, matches };
+  if(matches.length && matches.every(m=>m.winner)) return rpsAdvanceWave(round);
+  if(matches.length===0) return rpsAdvanceWave(round); // only a bye left
+  if(changed) await saveRound(round);
+}
+
+async function rpsAdvanceWave(r){
+  const wins = { ...(r.wins||{}) };
+  const winners = [], losers = [];
+  if(r.byeId) winners.push(r.byeId);
+  r.matches.forEach(m=>{
+    winners.push(m.winner);
+    losers.push(m.winner===m.a ? m.b : m.a);
+    wins[m.winner] = (wins[m.winner]||0) + 1;
+  });
+  const history = [ ...(r.history||[]), {
+    phase:r.phase, wave:r.wave, byeId:r.byeId||null,
+    matches:r.matches.map(m=>({ a:m.a, b:m.b, sa:m.sa, sb:m.sb, winner:m.winner }))
+  }];
+  const base = { ...r, history, wins };
+
+  const award = async (id, pts)=>{
+    const p = playersCache.find(x=>x.id===id);
+    if(p) await DB.updatePlayer(p.id, { score:(p.score||0)+pts });
+  };
 
   if(r.phase==='winners'){
-    const newLosersPool = [...(r.losersPool||[]), ...losersThisWave];
-    if(newAlive.length<=1){
-      const championId = newAlive[0];
-      const champ = playersCache.find(p=>p.id===championId);
-      if(champ) await DB.updatePlayer(champ.id, { score:(champ.score||0)+30 });
-      if(newLosersPool.length<=1){
-        if(newLosersPool.length===1){
-          const lchamp = playersCache.find(p=>p.id===newLosersPool[0]);
-          if(lchamp) await DB.updatePlayer(lchamp.id, { score:(lchamp.score||0)+15 });
-        }
-        const finalRound = {...r, phase:'done', alive:[], wins, losersPool:newLosersPool, winnersChampion:championId, losersChampion:newLosersPool[0]||null};
-        await showStandings(finalRound, champ?`🏆 ${champ.name} wins the RPS tournament!`:'RPS tournament complete!');
+    const losersPool = [ ...(r.losersPool||[]), ...losers ];
+    if(winners.length<=1){
+      const champ = winners[0];
+      await award(champ, 30);
+      if(losersPool.length<=1){
+        if(losersPool.length===1) await award(losersPool[0], 15);
+        const done = { ...base, phase:'done', matches:[], byeId:null, alive:[], losersPool, winnersChampion:champ, losersChampion:losersPool[0]||null };
+        await showStandings(done, `🏆 ${nameOf(champ)} wins the RPS tournament!`);
         await nextRound();
-      } else {
-        const { pairings, byeId } = makePairings(newLosersPool, {});
-        const nextPhaseRound = {...r, phase:'losers', wave:1, alive:newLosersPool, losersPool:[], wins:{}, pairings, byeId, winnersChampion:championId, startedAt:Date.now()};
-        await DB.updateGame(ROOM, { state:{...gameRow.state, round: nextPhaseRound} });
+        return;
       }
-    } else {
-      const { pairings, byeId } = makePairings(newAlive, wins);
-      await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, losersPool:newLosersPool, wins, pairings, byeId, wave:r.wave+1, startedAt:Date.now()}} });
+      await saveRound({ ...base, phase:'losers', wave:1, alive:losersPool, losersPool:[], wins:{}, winnersChampion:champ, ...rpsNewWave(losersPool, {}) });
+      return;
     }
-  } else { // losers phase
-    if(newAlive.length<=1){
-      const lchamp = playersCache.find(p=>p.id===newAlive[0]);
-      if(lchamp) await DB.updatePlayer(lchamp.id, { score:(lchamp.score||0)+15 });
-      const finalRound = {...r, phase:'done', alive:[], wins, losersChampion:newAlive[0]};
-      const winChamp = playersCache.find(p=>p.id===r.winnersChampion);
-      const msg = `🏆 ${winChamp?winChamp.name:'?'} wins the tournament! 🥈 ${lchamp?lchamp.name:'?'} takes the losers bracket.`;
-      await showStandings(finalRound, msg);
-      await nextRound();
+    await saveRound({ ...base, wave:r.wave+1, alive:winners, losersPool, ...rpsNewWave(winners, wins) });
+    return;
+  }
+  // losers bracket
+  if(winners.length<=1){
+    const lchamp = winners[0];
+    await award(lchamp, 15);
+    const done = { ...base, phase:'done', matches:[], byeId:null, alive:[], losersChampion:lchamp };
+    await showStandings(done, `🏆 ${nameOf(r.winnersChampion)} wins the tournament! 🥈 ${nameOf(lchamp)} takes the losers bracket.`);
+    await nextRound();
+    return;
+  }
+  await saveRound({ ...base, wave:r.wave+1, alive:winners, ...rpsNewWave(winners, wins) });
+}
+
+/* ---------- rendering ---------- */
+function rpsBracketHtml(r){
+  const waves = [ ...(r.history||[]) ];
+  if(r.phase!=='done' && (r.matches||[]).length + (r.byeId?1:0) > 0){
+    waves.push({ phase:r.phase, wave:r.wave, byeId:r.byeId, matches:r.matches, current:true });
+  }
+  if(!waves.length) return '';
+  let html = `<div class="bracket">`;
+  waves.forEach(w=>{
+    html += `<div class="br-head">${w.phase==='winners'?'Winners':'Losers'} bracket · wave ${w.wave}${w.current?' · now':''}</div>`;
+    w.matches.forEach(m=>{
+      const aCls = m.winner===m.a ? 'won' : m.winner ? 'lost' : '';
+      const bCls = m.winner===m.b ? 'won' : m.winner ? 'lost' : '';
+      const mid = m.winner || m.started ? `${m.sa}–${m.sb}` : 'vs';
+      const me = (m.a===ME.id||m.b===ME.id) ? ' mine' : '';
+      html += `<div class="br-row${me}"><span class="${aCls}">${esc(nameOf(m.a))}</span><span class="br-score">${mid}</span><span class="${bCls}">${esc(nameOf(m.b))}</span></div>`;
+    });
+    if(w.byeId) html += `<div class="br-row bye"><span class="won">${esc(nameOf(w.byeId))}</span><span class="br-score">bye</span><span></span></div>`;
+  });
+  if(r.phase==='winners' && (r.losersPool||[]).length){
+    html += `<div class="br-head">Losers bracket — plays next</div><div class="small" style="padding:2px 4px">${r.losersPool.map(id=>esc(nameOf(id))).join(' · ')}</div>`;
+  }
+  return html + `</div>`;
+}
+
+function rpsThrowLine(m, meIsA){
+  const L = m.last; if(!L) return '';
+  const mine = meIsA ? L.ca : L.cb, theirs = meIsA ? L.cb : L.ca;
+  const iWon = L.winner===ME.id, tie = !L.winner;
+  if(L.forfeit) return `<p class="throw-line">Throw ${L.n}: time ran out — ${iWon?'you get the point':'point to them'}</p>`;
+  const verdict = tie ? 'tie — throw again!' : iWon ? 'you win the throw!' : 'they win the throw';
+  return `<p class="throw-line">Throw ${L.n}: ${RPS_EMOJI[mine]||'?'} vs ${RPS_EMOJI[theirs]||'?'} — ${verdict}</p>`;
+}
+
+function renderRPS(r, body, status, hostCtl){
+  const phaseLabel = r.phase==='winners' ? 'Winners bracket' : 'Losers bracket';
+  let html = `<div class="small" style="margin-bottom:4px">${phaseLabel} · wave ${r.wave} · best of 3</div>`;
+  let statusText = '';
+  const i = r.matches.findIndex(m=>m.a===ME.id||m.b===ME.id);
+
+  if(i>=0){
+    const m = r.matches[i];
+    const meIsA = m.a===ME.id;
+    const opp = meIsA ? m.b : m.a;
+    const oppName = esc(nameOf(opp));
+    const my = meIsA ? m.sa : m.sb, their = meIsA ? m.sb : m.sa;
+    if(!m.started){
+      const iAmReady = m.ready[ME.id] || rpsSent.has(rpsKey(r,i,'ready'));
+      html += `<div class="prompt-text center">Next up: you vs ${oppName}</div>`;
+      html += `<p class="small center">Go find ${oppName}! Hit Ready when you're face to face — the match starts when you're both ready.</p>`;
+      if(iAmReady){
+        html += `<p class="center ready-note">✅ You're ready${m.ready[opp] ? '' : ` — waiting for ${oppName}`}</p>`;
+      } else {
+        html += `<button class="btn-primary" id="rps-ready" onclick="rpsReady()" style="width:100%">I'm ready</button>`;
+        if(m.ready[opp]) html += `<p class="center ready-note">${oppName} is ready!</p>`;
+      }
+      statusText = iAmReady ? 'Waiting for your opponent…' : 'Find your opponent, then hit Ready';
+    } else if(!m.winner){
+      const k = rpsKey(r,i,'t'+m.throwNo);
+      const thrown = rpsSent.has(k);
+      const myChoice = ['rock','paper','scissors'].find(c=>rpsSent.has(k+'='+c));
+      html += `<div class="prompt-text center">You vs ${oppName}</div>`;
+      html += `<div class="match-score"><span>You <b>${my}</b></span><span class="dash">–</span><span><b>${their}</b> ${oppName}</span></div>`;
+      html += `<p class="small center" style="margin:2px 0 8px">First to ${RPS_TO_WIN} · throw ${m.throwNo}</p>`;
+      html += rpsThrowLine(m, meIsA);
+      if(thrown){
+        html += `<p class="center ready-note">${RPS_EMOJI[myChoice]||'✔️'} locked in — waiting for ${oppName}</p>`;
+      } else {
+        html += `<div class="rps-choices">
+          <button onclick="rpsThrow('rock')" id="rps-rock">🪨</button>
+          <button onclick="rpsThrow('paper')" id="rps-paper">📄</button>
+          <button onclick="rpsThrow('scissors')" id="rps-scissors">✂️</button>
+        </div>`;
+      }
+      statusText = thrown ? 'Locked in…' : 'Rock, paper, or scissors?';
     } else {
-      const { pairings, byeId } = makePairings(newAlive, wins);
-      await DB.updateGame(ROOM, { state:{...gameRow.state, round:{...r, alive:newAlive, wins, pairings, byeId, wave:r.wave+1, startedAt:Date.now()}} });
+      const won = m.winner===ME.id;
+      html += `<div class="prompt-text center">${won ? `🎉 You beat ${oppName} ${my}–${their}!` : `${oppName} wins ${their}–${my}`}</div>`;
+      html += rpsThrowLine(m, meIsA);
+      const left = r.matches.filter(x=>!x.winner).length;
+      statusText = left ? `Waiting on ${left} more match${left===1?'':'es'}…` : 'Setting up the next wave…';
     }
+  } else if(r.byeId===ME.id){
+    html += `<p class="prompt-text center">🎉 Bye this wave — you go straight through!</p>`;
+    statusText = 'Sit back while the others play';
+  } else if(r.phase==='winners' && (r.losersPool||[]).includes(ME.id)){
+    html += `<p class="small center">You're in the losers bracket — it plays after the winners bracket wraps up.</p>`;
+  } else if(r.phase==='losers' && ME.id===r.winnersChampion){
+    html += `<p class="small center">🏆 You won the winners bracket! Watching the losers bracket battle for 2nd.</p>`;
+  } else {
+    html += `<p class="small center">You're out — cheer them on!</p>`;
+  }
+
+  html += rpsBracketHtml(r);
+  body.innerHTML = html;
+  status.textContent = statusText;
+  if(ME.isHost && r.matches.some(m=>!m.winner)){
+    hostCtl.classList.remove('hidden');
+    hostCtl.innerHTML = `<button class="btn-ghost" onclick="forceResolveNow()" style="font-size:13px;padding:10px">⏭ Skip ahead — finish the stuck matches</button>`;
   }
 }
 
