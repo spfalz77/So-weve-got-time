@@ -1,5 +1,6 @@
 -- So We've Got Time — Supabase schema
--- Run in the Supabase SQL editor. Safe to re-run.
+-- Applied automatically by `supabase start` (CI tests). For the live
+-- project, run it in the Supabase SQL editor. Safe to re-run.
 --
 -- Security model: there are no logins, so the browser uses the public
 -- "anon" key and anyone holding it can talk to these tables. We limit the

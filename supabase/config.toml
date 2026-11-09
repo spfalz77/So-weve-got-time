@@ -1,0 +1,37 @@
+# Local Supabase settings, used only by `supabase start` for the end-to-end
+# tests in CI. The live project is configured in the Supabase dashboard.
+# Ports are in the 553xx range: 543xx is sometimes taken on GitHub's runners.
+project_id = "so-weve-got-time"
+
+[api]
+port = 55321
+schemas = ["public", "graphql_public"]
+
+[db]
+port = 55322
+shadow_port = 55320
+major_version = 17
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+port = 55323
+
+[storage]
+enabled = false
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
+port = 55327
+
+[local_smtp]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://localhost:8765/"
